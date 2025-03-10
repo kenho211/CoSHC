@@ -290,6 +290,12 @@ def acc_and_f1(preds, labels):
 def compute_metrics(task_name, preds, labels):
     assert len(preds) == len(labels)
     if task_name == "codesearch":
+        print(preds)
+        print(labels)
+        print(preds.shape)
+        print(labels.shape)
+        print(preds.dtype)
+        print(labels.dtype)
         return acc_and_f1(preds, labels)
     else:
         raise KeyError(task_name)

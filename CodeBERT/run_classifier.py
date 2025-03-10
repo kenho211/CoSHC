@@ -318,11 +318,13 @@ def evaluate(args, model, tokenizer, checkpoint=None, prefix="", mode='dev'):
 
         eval_loss = eval_loss / nb_eval_steps
         if args.output_mode == "classification":
-            try:
+            if eval_task == 'codesearch':
+                preds_label = (preds > 0.9).astype(int)
+            else:
                 preds_label = np.argmax(preds, axis=1)
-            except:
-                preds_label = np.argmax(preds)
-        result = compute_metrics(eval_task, preds, out_label_ids)
+        
+        
+        result = compute_metrics(eval_task, preds_label, out_label_ids)
         results.update(result)
         if (mode == 'dev'):
             output_eval_file = os.path.join(eval_output_dir, "eval_results.txt")
