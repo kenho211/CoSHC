@@ -48,26 +48,36 @@ class BiEncoderModel(RobertaPreTrainedModel):
         self.init_weights()
     
     def forward(self, code_inputs, query_inputs, labels=None):
-        # Ensure input_ids, attention_mask, and token_type_ids have the correct dtype
-        # input_ids should be Long, attention_mask can be Float or Long
+        # Ensure input_ids are long type (for embedding lookup)
         if 'input_ids' in code_inputs and isinstance(code_inputs['input_ids'], torch.Tensor):
             code_inputs['input_ids'] = code_inputs['input_ids'].long()
-        
-        if 'attention_mask' in code_inputs and isinstance(code_inputs['attention_mask'], torch.Tensor):
-            code_inputs['attention_mask'] = code_inputs['attention_mask'].to(dtype=self.code_encoder.dtype)
-        
-        if 'token_type_ids' in code_inputs and code_inputs['token_type_ids'] is not None and isinstance(code_inputs['token_type_ids'], torch.Tensor):
-            code_inputs['token_type_ids'] = code_inputs['token_type_ids'].long()
         
         if 'input_ids' in query_inputs and isinstance(query_inputs['input_ids'], torch.Tensor):
             query_inputs['input_ids'] = query_inputs['input_ids'].long()
         
-        if 'attention_mask' in query_inputs and isinstance(query_inputs['attention_mask'], torch.Tensor):
-            query_inputs['attention_mask'] = query_inputs['attention_mask'].to(dtype=self.query_encoder.dtype)
+        # Convert attention_mask to the same dtype as the model's parameters
+        # This is crucial for scaled_dot_product_attention
+        dtype = next(self.parameters()).dtype
         
-        if 'token_type_ids' in query_inputs and query_inputs['token_type_ids'] is not None and isinstance(query_inputs['token_type_ids'], torch.Tensor):
+        if 'attention_mask' in code_inputs and isinstance(code_inputs['attention_mask'], torch.Tensor):
+            code_inputs['attention_mask'] = code_inputs['attention_mask'].to(dtype=dtype)
+        
+        if 'attention_mask' in query_inputs and isinstance(query_inputs['attention_mask'], torch.Tensor):
+            query_inputs['attention_mask'] = query_inputs['attention_mask'].to(dtype=dtype)
+        
+        # Handle token_type_ids if present
+        if 'token_type_ids' in code_inputs and code_inputs['token_type_ids'] is not None:
+            code_inputs['token_type_ids'] = code_inputs['token_type_ids'].long()
+        
+        if 'token_type_ids' in query_inputs and query_inputs['token_type_ids'] is not None:
             query_inputs['token_type_ids'] = query_inputs['token_type_ids'].long()
-            
+        
+        # Remove debug prints in production code
+        print(code_inputs['input_ids'].dtype)
+        print(code_inputs['attention_mask'].dtype)
+        print(query_inputs['input_ids'].dtype)
+        print(query_inputs['attention_mask'].dtype)
+        
         code_outputs = self.code_encoder(**code_inputs)
         query_outputs = self.query_encoder(**query_inputs)
         
