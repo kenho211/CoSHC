@@ -48,4 +48,6 @@ ENV/
 
 data/
 data/**
-
+CodeBERT/models
+CodeBERT/results
+CodeBERT/runs
