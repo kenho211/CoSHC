@@ -142,7 +142,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
                                  cls_token='[CLS]', sep_token='[SEP]', pad_token=0,
                                  sequence_a_segment_id=0, sequence_b_segment_id=1,
                                  cls_token_segment_id=1, pad_token_segment_id=0,
-                                 mask_padding_with_zero=True):
+                                 mask_padding_with_zero=True, debug=False,):
     """ Modified for bi-encoder architecture with separate code/query processing """
     label_map = {label: i for i, label in enumerate(label_list)}
 
@@ -150,6 +150,9 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
     for (ex_index, example) in enumerate(examples):
         if ex_index % 10000 == 0:
             logger.info("Writing example %d of %d" % (ex_index, len(examples)))
+
+        if debug and ex_index > 10000:
+            break
 
         # Process CODE input (text_a)
         code_tokens = tokenizer.tokenize(example.text_a)
