@@ -151,7 +151,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         if ex_index % 10000 == 0:
             logger.info("Writing example %d of %d" % (ex_index, len(examples)))
 
-        if debug and ex_index > 10000:
+        if debug and ex_index > 100:
             break
 
         # Process CODE input (text_a)

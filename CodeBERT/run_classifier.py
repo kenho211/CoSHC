@@ -300,7 +300,11 @@ def evaluate(args, model, tokenizer, checkpoint=None, prefix="", mode='dev'):
                     'token_type_ids': batch[5] if args.model_type in ['bert', 'xlnet'] else None,
                 }
                 labels = batch[6]
-                outputs = model(code_inputs, query_inputs)
+                
+                # Pass labels to the model to get the same output structure as in training
+                outputs = model(code_inputs, query_inputs, labels)
+                
+                # Now outputs[0] is loss and outputs[1] is cos_sim
                 cos_sim = outputs[1].detach().cpu().numpy()
                 tmp_eval_loss = outputs[0]
                 eval_loss += tmp_eval_loss.mean().item()
