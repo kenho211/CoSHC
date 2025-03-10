@@ -19,6 +19,7 @@ import glob
 import logging
 import os
 import random
+import sys
 
 
 import numpy as np
@@ -28,6 +29,10 @@ from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
 from torch.utils.data.distributed import DistributedSampler
 from tensorboardX import SummaryWriter
 from tqdm import tqdm, trange
+import torch_xla
+import torch_xla.core.xla_model as xm
+import torch_xla.distributed.parallel_loader as pl
+import torch_xla.distributed.xla_multiprocessing as xmp
 
 from transformers import (WEIGHTS_NAME, get_linear_schedule_with_warmup, AdamW,
                           RobertaConfig,
@@ -48,15 +53,6 @@ class BiEncoderModel(RobertaPreTrainedModel):
         self.init_weights()
     
     def forward(self, code_inputs, query_inputs, labels=None):
-        # Convert inputs to the same dtype to avoid the error with scaled_dot_product_attention
-        for key in code_inputs:
-            if isinstance(code_inputs[key], torch.Tensor):
-                code_inputs[key] = code_inputs[key].to(dtype=self.code_encoder.dtype)
-        
-        for key in query_inputs:
-            if isinstance(query_inputs[key], torch.Tensor):
-                query_inputs[key] = query_inputs[key].to(dtype=self.query_encoder.dtype)
-            
         code_outputs = self.code_encoder(**code_inputs)
         query_outputs = self.query_encoder(**query_inputs)
         
@@ -93,7 +89,18 @@ def train(args, train_dataset, model, tokenizer, optimizer):
         tb_writer = SummaryWriter()
 
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
-    train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
+    
+    # Modified sampler for TPU
+    if args.use_tpu:
+        train_sampler = torch.utils.data.distributed.DistributedSampler(
+            train_dataset,
+            num_replicas=xm.xrt_world_size(),
+            rank=xm.get_ordinal(),
+            shuffle=True
+        )
+    else:
+        train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
+    
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
 
     if args.max_steps > 0:
@@ -113,7 +120,7 @@ def train(args, train_dataset, model, tokenizer, optimizer):
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))
     logger.info("  Num Epochs = %d", args.num_train_epochs)
-    logger.info("  Instantaneous batch size per GPU = %d", args.per_gpu_train_batch_size)
+    logger.info("  Instantaneous batch size per GPU/TPU = %d", args.per_gpu_train_batch_size)
     logger.info("  Total train batch size (w. parallel, distributed & accumulation) = %d",
                 args.train_batch_size * args.gradient_accumulation_steps * (
                     torch.distributed.get_world_size() if args.local_rank != -1 else 1))
@@ -128,6 +135,11 @@ def train(args, train_dataset, model, tokenizer, optimizer):
                             disable=args.local_rank not in [-1, 0])
     set_seed(args)  # Added here for reproductibility (even between python 2 and 3)
     model.train()
+
+    # Wrap dataloader for TPU
+    if args.use_tpu:
+        train_dataloader = pl.ParallelLoader(train_dataloader, [args.device]).per_device_loader(args.device)
+    
     for idx, _ in enumerate(train_iterator):
         tr_loss = 0.0
         for step, batch in enumerate(train_dataloader):
@@ -167,23 +179,30 @@ def train(args, train_dataset, model, tokenizer, optimizer):
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
+            if args.use_tpu:
+                # Mark step for TPU
+                xm.mark_step()
+            
             tr_loss += loss.item()
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 optimizer.step()
                 scheduler.step()  # Update learning rate schedule
                 model.zero_grad()
                 global_step += 1
-
-                if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
-                    # Log metrics
-                    if args.local_rank == -1 and args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
-                        results = evaluate(args, model, tokenizer, checkpoint=str(global_step))
-                        for key, value in results.items():
-                            tb_writer.add_scalar('eval_{}'.format(key), value, global_step)
-                            logger.info('loss %s', str(tr_loss - logging_loss))
-                    tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
-                    tb_writer.add_scalar('loss', (tr_loss - logging_loss) / args.logging_steps, global_step)
+                
+                if args.use_tpu and args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
+                    # For TPU, we need to use xm.master_print for logging
+                    xm.master_print(f"Step {global_step}, Loss: {(tr_loss - logging_loss) / args.logging_steps}")
                     logging_loss = tr_loss
+                
+                if args.local_rank in [-1, 0] and args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
+                    results = evaluate(args, model, tokenizer, checkpoint=str(global_step))
+                    for key, value in results.items():
+                        tb_writer.add_scalar('eval_{}'.format(key), value, global_step)
+                        logger.info('loss %s', str(tr_loss - logging_loss))
+                tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
+                tb_writer.add_scalar('loss', (tr_loss - logging_loss) / args.logging_steps, global_step)
+
             if args.max_steps > 0 and global_step > args.max_steps:
                 # epoch_iterator.close()
                 break
@@ -260,6 +279,10 @@ def evaluate(args, model, tokenizer, checkpoint=None, prefix="", mode='dev'):
         eval_sampler = SequentialSampler(eval_dataset) if args.local_rank == -1 else DistributedSampler(eval_dataset)
         eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
 
+        # Wrap dataloader for TPU
+        if args.use_tpu:
+            eval_dataloader = pl.ParallelLoader(eval_dataloader, [args.device]).per_device_loader(args.device)
+
         # Eval!
         logger.info("***** Running evaluation {} *****".format(prefix))
         logger.info("  Num examples = %d", len(eval_dataset))
@@ -326,6 +349,11 @@ def evaluate(args, model, tokenizer, checkpoint=None, prefix="", mode='dev'):
                 for key in sorted(result.keys()):
                     print("%s = %s" % (key, str(result[key])))
 
+    # For TPU evaluation, we need to use xm.mesh_reduce to gather results
+    if args.use_tpu:
+        preds = xm.mesh_reduce('test_preds', preds, lambda x: np.concatenate(x, 0))
+        out_label_ids = xm.mesh_reduce('test_labels', out_label_ids, lambda x: np.concatenate(x, 0))
+    
     return results
 
 
@@ -482,6 +510,17 @@ def main():
                         help='model for prediction')
     parser.add_argument("--test_result_dir", default='test_results.tsv', type=str,
                         help='path to store test result')
+
+    # Add TPU arguments
+    parser.add_argument("--use_tpu", action='store_true',
+                        help="Whether to use TPU or GPU/CPU.")
+    parser.add_argument("--tpu_name", type=str, default=None,
+                        help="Name of TPU device to use")
+    parser.add_argument("--tpu_zone", type=str, default=None,
+                        help="Zone of TPU device")
+    parser.add_argument("--num_tpu_cores", type=int, default=8,
+                        help="Number of TPU cores to use")
+
     args = parser.parse_args()
 
     # Setup distant debugging if needed
@@ -493,9 +532,21 @@ def main():
         ptvsd.wait_for_attach()
 
     # Setup CUDA, GPU & distributed training
-    if args.local_rank == -1 or args.no_cuda:
+    if args.use_tpu:
+        if args.tpu_name:
+            # This is for Cloud TPU
+            import torch_xla.core.xla_model as xm
+            args.device = xm.xla_device()
+            args.n_gpu = 0
+        else:
+            # This is for Colab TPU
+            import torch_xla.core.xla_model as xm
+            args.device = xm.xla_device()
+            args.n_gpu = 0
+    elif args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
         args.n_gpu = torch.cuda.device_count()
+        args.device = device
     else:  # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         torch.cuda.set_device(args.local_rank)
         device = torch.device("cuda", args.local_rank)
@@ -573,6 +624,10 @@ def main():
     if os.path.exists(optimizer_last):
         optimizer.load_state_dict(torch.load(optimizer_last))
 
+    # For TPU, we need to use XLA optimizer wrapper
+    if args.use_tpu:
+        optimizer = torch_xla.core.xla_model.optimizer_step(optimizer)
+
     if args.fp16:
         try:
             from apex import amp
@@ -597,7 +652,10 @@ def main():
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
     # Saving best-practices: if you use defaults names for the model, you can reload it using from_pretrained()
-    if args.do_train and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
+    if args.do_train and args.use_tpu:
+        # Save model checkpoint to Cloud Storage
+        xm.save(model.state_dict(), os.path.join(args.output_dir, "model.pt"))
+    elif args.do_train and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
         # Create output directory if needed
         if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
             os.makedirs(args.output_dir)
@@ -641,8 +699,16 @@ def main():
         model = model_class.from_pretrained(args.pred_model_dir)
         model.to(args.device)
         evaluate(args, model, tokenizer, checkpoint=None, prefix='', mode='test')
+    
     return results
 
 
 if __name__ == "__main__":
-    main()
+    # For TPU, we need to use xmp.spawn
+    def _mp_fn(index):
+        main()
+    
+    if "--use_tpu" in sys.argv:
+        xmp.spawn(_mp_fn, args=(), nprocs=8)  # 8 is typical for v2-8 TPU
+    else:
+        main()
