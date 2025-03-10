@@ -318,7 +318,10 @@ def evaluate(args, model, tokenizer, checkpoint=None, prefix="", mode='dev'):
 
         eval_loss = eval_loss / nb_eval_steps
         if args.output_mode == "classification":
-            preds_label = np.argmax(preds, axis=1)
+            try:
+                preds_label = np.argmax(preds, axis=1)
+            except:
+                preds_label = np.argmax(preds)
         result = compute_metrics(eval_task, preds, out_label_ids)
         results.update(result)
         if (mode == 'dev'):
