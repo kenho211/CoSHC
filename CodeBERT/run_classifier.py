@@ -72,12 +72,6 @@ class BiEncoderModel(RobertaPreTrainedModel):
         if 'token_type_ids' in query_inputs and query_inputs['token_type_ids'] is not None:
             query_inputs['token_type_ids'] = query_inputs['token_type_ids'].long()
         
-        # Remove debug prints in production code
-        print(code_inputs['input_ids'].dtype)
-        print(code_inputs['attention_mask'].dtype)
-        print(query_inputs['input_ids'].dtype)
-        print(query_inputs['attention_mask'].dtype)
-        
         code_outputs = self.code_encoder(**code_inputs)
         query_outputs = self.query_encoder(**query_inputs)
         
