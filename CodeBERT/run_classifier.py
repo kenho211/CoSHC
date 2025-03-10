@@ -48,14 +48,25 @@ class BiEncoderModel(RobertaPreTrainedModel):
         self.init_weights()
     
     def forward(self, code_inputs, query_inputs, labels=None):
-        # Convert inputs to the same dtype to avoid the error with scaled_dot_product_attention
-        for key in code_inputs:
-            if isinstance(code_inputs[key], torch.Tensor):
-                code_inputs[key] = code_inputs[key].to(dtype=self.code_encoder.dtype)
+        # Ensure input_ids, attention_mask, and token_type_ids have the correct dtype
+        # input_ids should be Long, attention_mask can be Float or Long
+        if 'input_ids' in code_inputs and isinstance(code_inputs['input_ids'], torch.Tensor):
+            code_inputs['input_ids'] = code_inputs['input_ids'].long()
         
-        for key in query_inputs:
-            if isinstance(query_inputs[key], torch.Tensor):
-                query_inputs[key] = query_inputs[key].to(dtype=self.query_encoder.dtype)
+        if 'attention_mask' in code_inputs and isinstance(code_inputs['attention_mask'], torch.Tensor):
+            code_inputs['attention_mask'] = code_inputs['attention_mask'].to(dtype=self.code_encoder.dtype)
+        
+        if 'token_type_ids' in code_inputs and code_inputs['token_type_ids'] is not None and isinstance(code_inputs['token_type_ids'], torch.Tensor):
+            code_inputs['token_type_ids'] = code_inputs['token_type_ids'].long()
+        
+        if 'input_ids' in query_inputs and isinstance(query_inputs['input_ids'], torch.Tensor):
+            query_inputs['input_ids'] = query_inputs['input_ids'].long()
+        
+        if 'attention_mask' in query_inputs and isinstance(query_inputs['attention_mask'], torch.Tensor):
+            query_inputs['attention_mask'] = query_inputs['attention_mask'].to(dtype=self.query_encoder.dtype)
+        
+        if 'token_type_ids' in query_inputs and query_inputs['token_type_ids'] is not None and isinstance(query_inputs['token_type_ids'], torch.Tensor):
+            query_inputs['token_type_ids'] = query_inputs['token_type_ids'].long()
             
         code_outputs = self.code_encoder(**code_inputs)
         query_outputs = self.query_encoder(**query_inputs)
@@ -345,6 +356,9 @@ def load_and_cache_examples(args, task, tokenizer, ttype='train'):
         list(filter(None, args.model_name_or_path.split('/'))).pop(),
         str(args.max_seq_length),
         str(task)))
+    
+    if args.debug:
+        cached_features_file = cached_features_file + '_debug'
 
     # if os.path.exists(cached_features_file):
     try:
