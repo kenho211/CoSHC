@@ -370,7 +370,8 @@ def load_and_cache_examples(args, task, tokenizer, ttype='train'):
                                                 cls_token_segment_id=2 if args.model_type in ['xlnet'] else 1,
                                                 pad_on_left=bool(args.model_type in ['xlnet']),
                                                 # pad on the left for xlnet
-                                                pad_token_segment_id=4 if args.model_type in ['xlnet'] else 0)
+                                                pad_token_segment_id=4 if args.model_type in ['xlnet'] else 0,
+                                                debug=args.debug)
         if args.local_rank in [-1, 0]:
             logger.info("Saving features into cached file %s", cached_features_file)
             torch.save(features, cached_features_file)
@@ -482,6 +483,8 @@ def main():
                         help='model for prediction')
     parser.add_argument("--test_result_dir", default='test_results.tsv', type=str,
                         help='path to store test result')
+    parser.add_argument("--debug", action='store_true',
+                        help="Whether to run in debug mode")
     args = parser.parse_args()
 
     # Setup distant debugging if needed
