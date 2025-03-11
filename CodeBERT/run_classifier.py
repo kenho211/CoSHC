@@ -146,7 +146,7 @@ def train(args, train_dataset, model, tokenizer, optimizer):
     for idx, _ in enumerate(train_iterator):
         tr_loss = 0.0
         for step, batch in enumerate(train_dataloader):
-
+            logger.info(f"Epoch {idx}, Batch {step} of {len(train_dataloader)}")
             batch = tuple(t.to(args.device) for t in batch)
             code_inputs = {
                 'input_ids': batch[0],
