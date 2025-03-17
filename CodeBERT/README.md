@@ -1,86 +1,112 @@
+
+
 # Code Search
 
 ## Data Preprocess
 
-Both training and validation datasets are created in a way that positive and negative samples are balanced. Negative samples consist of balanced number of instances with randomly replaced NL and PL.
+Different from the setting of [CodeSearchNet](husain2019codesearchnet), the answer of each query is retrieved from the whole development and testing code corpus instead of 1,000 candidate codes. Besides, we observe that some queries contain content unrelated to the code, such as a link ``http://..." that refers to external resources.  Therefore, we filter following examples to improve the quality of the dataset. 
 
-We follow the official evaluation metric to calculate the Mean Reciprocal Rank (MRR) for each pair of test data (c, w) over a fixed set of 999 distractor codes.
+- Remove comments in the code
 
-You can use the following command to download the preprocessed training and validation dataset and preprocess the test dataset by yourself. The preprocessed testing dataset is very large, so only the preprocessing script is provided.
+- Remove examples that codes cannot be parsed into an abstract syntax tree.
 
+- Remove examples that #tokens of documents is < 3 or >256
+
+- Remove examples that documents contain special tokens (e.g. <img ...> or https:...)
+
+- Remove examples that documents are not English.
+
+Data statistic about the cleaned dataset for code document generation is shown in this Table.
+
+| PL         | Training |  Dev   |  Test  | Candidates code |
+| :--------- | :------: | :----: | :----: | :-------------: |
+| Python     | 251,820  | 13,914 | 14,918 |     43,827      |
+| PHP        | 241,241  | 12,982 | 14,014 |     52,660      |
+| Go         | 167,288  | 7,325  | 8,122  |     28,120      |
+| Java       | 164,923  | 5,183  | 10,955 |     40,347      |
+| JavaScript |  58,025  | 3,885  | 3,291  |     13,981      |
+| Ruby       |  24,927  | 1,400  | 1,261  |      4,360      |
+
+You can download and preprocess data using the following command.
 ```shell
-mkdir data data/codesearch
-cd data/codesearch
-gdown https://drive.google.com/uc?id=1xgSR34XO8xXZg4cZScDYj2eGerBE9iGo  
-unzip codesearch_data.zip
-rm  codesearch_data.zip
-cd ../../codesearch
-python process_data.py
+unzip dataset.zip
+cd dataset
+bash run.sh 
 cd ..
 ```
 
+## Dependency 
+
+- pip install torch
+- pip install transformers
+
 ## Fine-Tune
-We fine-tuned the model on 2*P100 GPUs. 
+
+We fine-tuned the model on 2*V100-16G GPUs. 
 ```shell
-cd codesearch
-
-lang=php #fine-tuning a language-specific model for each programming language 
-pretrained_model=microsoft/codebert-base  #Roberta: roberta-base
-
-python run_classifier.py \
---model_type roberta \
---task_name codesearch \
---do_train \
---do_eval \
---eval_all_checkpoints \
---train_file train.txt \
---dev_file valid.txt \
---max_seq_length 200 \
---per_gpu_train_batch_size 128 \
---per_gpu_eval_batch_size 128 \
---learning_rate 1e-5 \
---num_train_epochs 8 \
---gradient_accumulation_steps 2 \
---overwrite_output_dir \
---data_dir ../data/codesearch/train_valid/$lang \
---output_dir ./models/$lang  \
---model_name_or_path $pretrained_model
+lang=ruby
+mkdir -p ./saved_models/$lang
+python run.py \
+    --output_dir=./saved_models/$lang \
+    --config_name=microsoft/codebert-base \
+    --model_name_or_path=microsoft/codebert-base \
+    --tokenizer_name=microsoft/codebert-base \
+    --do_train \
+    --train_data_file=dataset/$lang/train.jsonl \
+    --eval_data_file=dataset/$lang/valid.jsonl \
+    --test_data_file=dataset/$lang/test.jsonl \
+    --codebase_file=dataset/$lang/codebase.jsonl \
+    --num_train_epochs 10 \
+    --code_length 256 \
+    --nl_length 128 \
+    --train_batch_size 32 \
+    --eval_batch_size 64 \
+    --learning_rate 2e-5 \
+    --seed 123456 2>&1| tee saved_models/$lang/train.log
 ```
 ## Inference and Evaluation
 
-Inference
 ```shell
-lang=php #programming language
-idx=0 #test batch idx
-
-python run_classifier.py \
---model_type roberta \
---model_name_or_path microsoft/codebert-base \
---task_name codesearch \
---do_predict \
---output_dir ./models/$lang \
---data_dir ../data/codesearch/test/$lang \
---max_seq_length 200 \
---per_gpu_train_batch_size 32 \
---per_gpu_eval_batch_size 32 \
---learning_rate 1e-5 \
---num_train_epochs 8 \
---test_file batch_${idx}.txt \
---pred_model_dir ./models/$lang/checkpoint-best/ \
---test_result_dir ./results/$lang/${idx}_batch_result.txt
+lang=ruby
+python run.py \
+    --output_dir=./saved_models/$lang \
+    --config_name=microsoft/codebert-base \
+    --model_name_or_path=microsoft/codebert-base \
+    --tokenizer_name=microsoft/codebert-base \
+    --do_eval \
+    --do_test \
+    --train_data_file=dataset/$lang/train.jsonl \
+    --eval_data_file=dataset/$lang/valid.jsonl \
+    --test_data_file=dataset/$lang/test.jsonl \
+    --codebase_file=dataset/$lang/codebase.jsonl \
+    --num_train_epochs 10 \
+    --code_length 256 \
+    --nl_length 128 \
+    --train_batch_size 32 \
+    --eval_batch_size 64 \
+    --learning_rate 2e-5 \
+    --seed 123456 2>&1| tee saved_models/$lang/test.log
 ```
 
-Evaluation
+## Demo
+
 ```shell
-python mrr.py
-```
-
-Fine-Tune with Bi-encoder
-```bash
-python run_classifier.py --model_type roberta --task_name codesearch --do_train --do_eval --eval_all_checkpoints --train_file train.txt --dev_file valid.txt --max_seq_length 200 --per_gpu_train_batch_size 128 --per_gpu_eval_batch_size 128 --learning_rate 1e-5 --num_train_epochs 10 --gradient_accumulation_steps 2 --overwrite_output_dir --data_dir ../data/train_valid/python --output_dir ./models/python  --model_name_or_path microsoft/codebert-base
+cd demo
+python demo.py
 ```
 
 
-```bash
-python run_classifier.py --model_type roberta --model_name_or_path microsoft/codebert-base --task_name codesearch --do_predict --output_dir ./models/java --data_dir ../data/test/java --max_seq_length 200 --per_gpu_train_batch_size 32 --per_gpu_eval_batch_size 32 --learning_rate 1e-5 --num_train_epochs 8 --test_file test.txt --pred_model_dir ./models/java/checkpoint-best/ --test_result_dir ./results/java/result.txt
-```
+## Results	
+
+The results on the filtered dataset are shown in this Table:
+
+| Model          |   Ruby    | Javascript |    Go     |  Python   |   Java    |    PHP    |  Overall  |
+| -------------- | :-------: | :--------: | :-------: | :-------: | :-------: | :-------: | :-------: |
+| NBow           |   0.162   |   0.157    |   0.330   |   0.161   |   0.171   |   0.152   |   0.189   |
+| CNN            |   0.276   |   0.224    |   0.680   |   0.242   |   0.263   |   0.260   |   0.324   |
+| BiRNN          |   0.213   |   0.193    |   0.688   |   0.290   |   0.304   |   0.338   |   0.338   |
+| SelfAtt        |   0.275   |   0.287    |   0.723   |   0.398   |   0.404   |   0.426   |   0.419   |
+| RoBERTa        |   0.587   |   0.517    |   0.850   |   0.587   |   0.599   |   0.560   |   0.617   |
+| RoBERTa (code) |   0.628   |   0.562    |   0.859   |   0.610   |   0.620   |   0.579   |   0.643   |
+| CodeBERT       |   0.679   |   0.620    |   0.882   |   0.672   |   0.676   |   0.628   |   0.693   |
+| GraphCodeBERT  | **0.703** | **0.644**  | **0.897** | **0.692** | **0.691** | **0.649** | **0.713** |
