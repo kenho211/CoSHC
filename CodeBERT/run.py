@@ -172,8 +172,8 @@ def train(args, model, tokenizer):
             logger.info("  %s = %s", key, round(value,4))    
             
         #save best model
-        if results['eval_mrr']>best_mrr:
-            best_mrr=results['eval_mrr']
+        if results['MRR']>best_mrr:
+            best_mrr=results['MRR']
             logger.info("  "+"*"*20)  
             logger.info("  Best mrr:%s",round(best_mrr,4))
             logger.info("  "+"*"*20)                          
@@ -183,7 +183,6 @@ def train(args, model, tokenizer):
             if not os.path.exists(output_dir):
                 os.makedirs(output_dir)         
             model_to_save = model.module if hasattr(model,'module') else model
-            model_to_save.encoder.save_pretrained(output_dir)            
             output_dir = os.path.join(output_dir, '{}'.format('model.bin')) 
             torch.save(model_to_save.state_dict(), output_dir) 
             logger.info("Saving model checkpoint to %s", output_dir)
@@ -223,6 +222,7 @@ def evaluate(args, model, tokenizer,file_name,eval_when_training=False):
         with torch.no_grad():
             code_vec= model(code_inputs=code_inputs)
             code_vecs.append(code_vec.cpu().numpy())  
+
     model.train()    
     code_vecs=np.concatenate(code_vecs,0)
     nl_vecs=np.concatenate(nl_vecs,0)
@@ -240,21 +240,42 @@ def evaluate(args, model, tokenizer,file_name,eval_when_training=False):
         code_urls.append(example.url)
         
     ranks=[]
+    success_at_1=0
+    success_at_5=0
+    success_at_10=0
     for url, sort_id in zip(nl_urls,sort_ids):
         rank=0
         find=False
+        found_rank=None
         for idx in sort_id[:1000]:
             if find is False:
-                rank+=1
-            if code_urls[idx]==url:
+                rank += 1
+            if code_urls[idx] == url:
                 find=True
+                found_rank=idx
+                break
+
+        # Rank for MRR later
         if find:
             ranks.append(1/rank)
         else:
             ranks.append(0)
     
+        # Success@K calculation
+        if found_rank is not None:
+            if found_rank < 1:  # Success@1
+                success_at_1 += 1
+            if found_rank < 5:  # Success@5
+                success_at_5 += 1
+            if found_rank < 10:  # Success@10
+                success_at_10 += 1
+
+    total = len(nl_urls)
     result = {
-        "eval_mrr":float(np.mean(ranks))
+        "Success@1": success_at_1 / total,
+        "Success@5": success_at_5 / total,
+        "Success@10": success_at_10 / total,
+        "MRR": np.mean(ranks)
     }
 
     return result
@@ -343,7 +364,8 @@ def main():
     if args.do_eval:
         checkpoint_prefix = 'checkpoint-best-mrr/model.bin'
         output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))  
-        model.load_state_dict(torch.load(output_dir),strict=False)      
+        # model.load_state_dict(torch.load(output_dir),strict=False) 
+        model.load_state_dict(torch.load(output_dir, map_location=args.device), strict=True)     
         model.to(args.device)
         result=evaluate(args, model, tokenizer,args.eval_data_file)
         logger.info("***** Eval results *****")
@@ -353,7 +375,8 @@ def main():
     if args.do_test:
         checkpoint_prefix = 'checkpoint-best-mrr/model.bin'
         output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))  
-        model.load_state_dict(torch.load(output_dir),strict=False)      
+        # model.load_state_dict(torch.load(output_dir),strict=False)
+        model.load_state_dict(torch.load(output_dir, map_location=args.device), strict=True)
         model.to(args.device)
         result=evaluate(args, model, tokenizer,args.test_data_file)
         logger.info("***** Eval results *****")
