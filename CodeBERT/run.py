@@ -240,41 +240,45 @@ def evaluate(args, model, tokenizer,file_name,eval_when_training=False):
         code_urls.append(example.url)
         
     ranks=[]
-    success_at_1=0
-    success_at_5=0
-    success_at_10=0
+    success_at_1=[]
+    success_at_5=[]
+    success_at_10=[]
     for url, sort_id in zip(nl_urls,sort_ids):
-        rank=0
-        find=False
-        found_rank=None
+        rank = 0
+        found = False
         for idx in sort_id[:1000]:
-            if find is False:
+            if found is False:
                 rank += 1
             if code_urls[idx] == url:
-                find=True
-                found_rank=idx
+                found = True
                 break
 
         # Rank for MRR later
-        if find:
+        if found:
             ranks.append(1/rank)
+            if rank <= 1:
+                success_at_1.append(1)
+                success_at_5.append(1)
+                success_at_10.append(1)
+            elif rank <= 5:
+                success_at_1.append(0)
+                success_at_5.append(1)
+                success_at_10.append(1)
+            elif rank <= 10:
+                success_at_1.append(0)
+                success_at_5.append(0)
+                success_at_10.append(1)
+            else:
+                success_at_1.append(0)
+                success_at_5.append(0)
+                success_at_10.append(0)
         else:
             ranks.append(0)
-    
-        # Success@K calculation
-        if found_rank is not None:
-            if found_rank < 1:  # Success@1
-                success_at_1 += 1
-            if found_rank < 5:  # Success@5
-                success_at_5 += 1
-            if found_rank < 10:  # Success@10
-                success_at_10 += 1
 
-    total = len(nl_urls)
     result = {
-        "Success@1": success_at_1 / total,
-        "Success@5": success_at_5 / total,
-        "Success@10": success_at_10 / total,
+        "Success@1": np.mean(success_at_1),
+        "Success@5": np.mean(success_at_5),
+        "Success@10": np.mean(success_at_10),
         "MRR": np.mean(ranks)
     }
 
