@@ -474,6 +474,7 @@ def main():
                         help="Path to save hash codes")
 
     args = parser.parse_args()
+    logger.info("args: %s", args)
     
     #set log
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
