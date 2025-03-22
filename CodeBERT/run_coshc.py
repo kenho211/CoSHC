@@ -491,6 +491,7 @@ def main():
     base_model = BaseModel(_base_model)
 
     # load pretrained CodeBERT model
+    logger.info("Loading pretrained CodeBERT model from %s", args.model_name_or_path)
     base_model.load_state_dict(torch.load(args.model_name_or_path, map_location=args.device), strict=True)
     base_model.to(args.device)
 
