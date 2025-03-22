@@ -498,8 +498,9 @@ def main():
     base_model.to(args.device)
 
     # save code embeddings (only need to run once)
-    if args.do_embed and not os.path.exists(args.embedding_dir):
-        os.makedirs(args.embedding_dir)
+    if args.do_embed \
+        and not os.path.exists(os.path.join(args.embedding_dir, "embeddings.pt")):
+        os.makedirs(args.embedding_dir, exist_ok=True)
         code_dataset = TextDataset(tokenizer, args, args.codebase_file)
         code_dataloader = DataLoader(code_dataset, batch_size=args.eval_batch_size)
         save_code_embeddings(base_model, code_dataloader, args.embedding_dir, args.device)
