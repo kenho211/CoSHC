@@ -198,7 +198,7 @@ def train_coshc(args, model, tokenizer, code_embeddings):
             cluster_pred = model.classifier.to(args.device)(code_embs)
             
             # Get target cluster labels for this batch
-            batch_labels = torch.tensor([cluster_labels[i] for i in range(len(code_inputs))]).to(args.device)
+            batch_labels = torch.tensor([cluster_labels[i] for i in range(len(code_inputs))], dtype=torch.long).to(args.device)
             
             # Compute and backprop classification loss
             loss = classifier_criterion(cluster_pred, batch_labels)
