@@ -474,7 +474,7 @@ def main():
                         help="Path to save hash codes")
 
     args = parser.parse_args()
-    logger.info("args: %s", args)
+    print("args: %s", args)
     
     #set log
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
@@ -493,6 +493,7 @@ def main():
 
     # load pretrained CodeBERT model
     logger.info("Loading pretrained CodeBERT model from %s", args.model_name_or_path)
+    logger.info("output_dir: %s", args.output_dir)
     base_model.load_state_dict(torch.load(args.model_name_or_path, map_location=args.device), strict=True)
     base_model.to(args.device)
 
