@@ -475,6 +475,15 @@ def main():
 
     args = parser.parse_args()
     
+    #set log
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                    datefmt='%m/%d/%Y %H:%M:%S',level=logging.INFO )
+    #set device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    args.n_gpu = torch.cuda.device_count()
+    args.device = device
+    logger.info("device: %s, n_gpu: %s",device, args.n_gpu)
+
     # build baseline CodeBERT model
     config = RobertaConfig.from_pretrained(args.config_name if args.config_name else args.model_name_or_path)
     tokenizer = RobertaTokenizer.from_pretrained(args.tokenizer_name)
