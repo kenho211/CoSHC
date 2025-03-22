@@ -180,7 +180,7 @@ def train_coshc(args, model, tokenizer, code_embeddings):
     
     # Step 1: Code Clustering (Section 3.1.1)
     kmeans = KMeans(n_clusters=10, random_state=args.seed)
-    cluster_labels = kmeans.fit_predict(code_embeddings)
+    cluster_labels = kmeans.fit_predict(code_embeddings.cpu())
     
     # Step 2: Train Classification Module
     # Train classification module using cross-entropy loss
@@ -510,7 +510,7 @@ def main():
 
     if args.do_train:
         # Load precomputed code embeddings
-        code_embeddings = load_code_embeddings(args.embedding_dir, args.device)  
+        code_embeddings = load_code_embeddings(args.embedding_dir, args.device)
         train_coshc(args, model, tokenizer, code_embeddings)
     
     if args.do_eval:
