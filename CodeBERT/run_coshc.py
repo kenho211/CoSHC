@@ -97,7 +97,7 @@ def hashing_loss(B_code, B_nl, S_target, mu=1.5, lambda1=0.1, lambda2=0.1):
     return loss_cq + lambda1*loss_cc + lambda2*loss_nn
 
 
-def save_code_embeddings(model, dataloader, output_dir):
+def save_code_embeddings(model, dataloader, output_dir, device):
     """
     Generate and save code embeddings using the base CodeBERT model
     Paper Reference: Section 3.1 Offline Processing
@@ -109,7 +109,7 @@ def save_code_embeddings(model, dataloader, output_dir):
     
     with torch.no_grad():
         for batch in dataloader:
-            code_inputs = batch[0].to(model.device)
+            code_inputs = batch[0].to(device)
             embeddings = model(code_inputs=code_inputs)
             all_embeddings.append(embeddings.cpu())
     
@@ -502,7 +502,7 @@ def main():
         os.makedirs(args.embedding_dir)
         code_dataset = TextDataset(tokenizer, args, args.codebase_file)
         code_dataloader = DataLoader(code_dataset, batch_size=args.eval_batch_size)
-        save_code_embeddings(base_model, code_dataloader, args.embedding_dir)
+        save_code_embeddings(base_model, code_dataloader, args.embedding_dir, args.device)
 
     # build CoSHC model
     model = CoSHCModel(base_model)
