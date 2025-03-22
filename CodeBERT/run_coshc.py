@@ -179,7 +179,7 @@ def train_coshc(args, model, tokenizer, code_embeddings):
     """Joint training of hashing and classification modules"""
     
     # Step 1: Code Clustering (Section 3.1.1)
-    kmeans = KMeans(n_clusters=10, random_state=args.seed)
+    kmeans = KMeans(n_clusters=args.num_clusters, random_state=args.seed)
     cluster_labels = kmeans.fit_predict(code_embeddings.cpu())
     
     # Step 2: Train Classification Module
@@ -187,8 +187,10 @@ def train_coshc(args, model, tokenizer, code_embeddings):
     classifier_optimizer = torch.optim.AdamW(model.classifier.parameters(), lr=args.learning_rate)
     classifier_criterion = CrossEntropyLoss()
     
+    code_dataset = TextDataset(tokenizer, args, args.codebase_file)
+    code_dataloader = DataLoader(code_dataset, batch_size=args.eval_batch_size)
     for epoch in range(args.class_epochs):
-        for batch in dataloader:
+        for batch in code_dataloader:
             code_inputs = batch[0].to(args.device)
             
             # Get code embeddings and predict clusters
