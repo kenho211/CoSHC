@@ -275,10 +275,15 @@ def main():
 
     args = parser.parse_args()
     
-    # Original CodeBERT setup
-    base_model = BaseModel(RobertaModel.from_pretrained(args.model_name_or_path))
+    # build baseline CodeBERT model
+    config = RobertaConfig.from_pretrained(args.config_name if args.config_name else args.model_name_or_path)
+    tokenizer = RobertaTokenizer.from_pretrained(args.tokenizer_name)
+    _base_model = RobertaModel.from_pretrained(args.model_name_or_path)
+    base_model = BaseModel(_base_model)
+
+    # build CoSHC model
     model = CoSHCModel(base_model)
-    
+
     if args.do_train:
         # Load precomputed code embeddings
         code_embeddings = load_code_embeddings()  
