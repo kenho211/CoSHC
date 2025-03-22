@@ -509,7 +509,7 @@ def main():
 
     if args.do_train:
         # Load precomputed code embeddings
-        code_embeddings = load_code_embeddings()  
+        code_embeddings = load_code_embeddings(args.embedding_dir, args.device)  
         train_coshc(args, model, tokenizer, code_embeddings)
     
     if args.do_eval:
