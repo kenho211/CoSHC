@@ -19,7 +19,7 @@ from model import Model as BaseModel
 from run import TextDataset
 from torch.nn import CrossEntropyLoss, MSELoss, CosineSimilarity
 from torch.utils.data import DataLoader, Dataset, SequentialSampler
-from transformers import RobertaConfig, RobertaTokenizer
+from transformers import RobertaConfig, RobertaTokenizer, RobertaModel
 
 logger = logging.getLogger(__name__)
 
