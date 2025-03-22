@@ -443,6 +443,10 @@ def main():
     parser.add_argument("--embedding_dir", default="./code_embeddings", type=str,
                         help="Directory to save code embeddings")
 
+    # Classification Parameters
+    parser.add_argument("--class_epochs", type=int, default=5,
+                        help="Number of epochs for classification module training (Sec 3.2.2)")
+
     # Clustering Parameters
     parser.add_argument("--num_clusters", default=10, type=int,
                         help="Number of code clusters (Sec 3.1.1)")
