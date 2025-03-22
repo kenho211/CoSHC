@@ -195,7 +195,7 @@ def train_coshc(args, model, tokenizer, code_embeddings):
             
             # Get code embeddings and predict clusters
             code_embs = model(code_inputs=code_inputs)
-            cluster_pred = model.classifier(code_embs)
+            cluster_pred = model.classifier.to(args.device)(code_embs)
             
             # Get target cluster labels for this batch
             batch_labels = torch.tensor([cluster_labels[i] for i in range(len(code_inputs))]).to(args.device)
