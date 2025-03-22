@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-import torch.nn as nn
-from transformers import RobertaModel
+import torch.nn as nn # type: ignore
+from transformers import RobertaModel # type: ignore
 
 class Model(nn.Module):
     def __init__(self, encoder):

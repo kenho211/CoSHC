@@ -24,13 +24,13 @@ import logging
 import os
 import pickle
 import random
-import torch
+import torch # type: ignore
 import json
 import numpy as np
 from model import Model
-from torch.nn import CrossEntropyLoss, MSELoss
-from torch.utils.data import DataLoader, Dataset, SequentialSampler, RandomSampler,TensorDataset
-from transformers import (WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup,
+from torch.nn import CrossEntropyLoss, MSELoss # type: ignore
+from torch.utils.data import DataLoader, Dataset, SequentialSampler, RandomSampler,TensorDataset # type: ignore
+from transformers import (WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup, # type: ignore
                   RobertaConfig, RobertaModel, RobertaTokenizer)
 
 logger = logging.getLogger(__name__)

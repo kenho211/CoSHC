@@ -11,15 +11,16 @@ import logging
 import os
 import pickle
 import random
-import torch
+import torch # type: ignore
 import json
 import numpy as np
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans # type: ignore
 from model import Model as BaseModel
 from run import TextDataset
-from torch.nn import CrossEntropyLoss, MSELoss, CosineSimilarity
-from torch.utils.data import DataLoader, Dataset, SequentialSampler
-from transformers import RobertaConfig, RobertaTokenizer, RobertaModel
+from torch.nn import CrossEntropyLoss, MSELoss, CosineSimilarity # type: ignore
+from torch.utils.data import DataLoader, Dataset, SequentialSampler # type: ignore
+from transformers import RobertaConfig, RobertaTokenizer, RobertaModel # type: ignore
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,82 @@ def hashing_loss(B_code, B_nl, S_target, mu=1.5, lambda1=0.1, lambda2=0.1):
     
     return loss_cq + lambda1*loss_cc + lambda2*loss_nn
 
+
+def save_code_embeddings(model, dataloader, output_dir):
+    """
+    Generate and save code embeddings using the base CodeBERT model
+    Paper Reference: Section 3.1 Offline Processing
+    """
+    model.eval()
+    all_embeddings = []
+    
+    os.makedirs(output_dir, exist_ok=True)
+    
+    with torch.no_grad():
+        for batch in dataloader:
+            code_inputs = batch[0].to(model.device)
+            embeddings = model(code_inputs=code_inputs)
+            all_embeddings.append(embeddings.cpu())
+    
+    # Concatenate and save
+    code_embeddings = torch.cat(all_embeddings, dim=0)
+    torch.save(code_embeddings, os.path.join(output_dir, "embeddings.pt"))
+    
+    # Save metadata
+    metadata = {
+        "total_codes": code_embeddings.shape[0],
+        "dimension": code_embeddings.shape[1],
+        "created_at": datetime.now().isoformat()
+    }
+    with open(os.path.join(output_dir, "metadata.json"), 'w') as f:
+        json.dump(metadata, f)
+        
+    logger.info(f"Saved {metadata['total_codes']} code embeddings to {output_dir}")
+
+
+def load_code_embeddings(embedding_dir: str = "./code_embeddings",
+                         device: torch.device = None) -> torch.Tensor:
+    """
+    Load precomputed code embeddings for CoSHC initialization
+    Paper Reference: Section 3.1.1 (Offline Processing)
+    
+    Args:
+        embedding_dir: Path to directory containing:
+            - embeddings.pt: Tensor of shape [num_codes, 768]
+            - metadata.json: {"total_codes": N, "dimension": 768}
+        device: Target device for embeddings (default: CPU for clustering)
+    
+    Returns:
+        Tensor: Float tensor of shape [num_codes, hidden_dim]
+    """
+    try:
+        # Validate directory structure
+        if not os.path.exists(embedding_dir):
+            raise FileNotFoundError(f"Embedding directory {embedding_dir} not found")
+            
+        # Load metadata
+        with open(os.path.join(embedding_dir, "metadata.json")) as f:
+            metadata = json.load(f)
+        
+        # Load embeddings tensor
+        embeddings_path = os.path.join(embedding_dir, "embeddings.pt")
+        code_embeddings = torch.load(embeddings_path, map_location='cpu')
+        
+        # Validate dimensions
+        expected_shape = (metadata["total_codes"], metadata["dimension"])
+        if code_embeddings.shape != expected_shape:
+            raise ValueError(f"Embedding shape mismatch. Expected {expected_shape}, "
+                             f"got {code_embeddings.shape}")
+        
+        # Paper-recommended preprocessing (Sec 3.1.1)
+        code_embeddings = code_embeddings / torch.norm(code_embeddings, dim=1, keepdim=True)
+        
+        return code_embeddings.to(device) if device else code_embeddings
+
+    except Exception as e:
+        logger.error(f"Failed to load code embeddings: {str(e)}")
+        raise
+
 # --------------------------------------------------
 # Main Training and Evaluation Logic
 # --------------------------------------------------
@@ -106,7 +183,26 @@ def train_coshc(args, model, tokenizer, code_embeddings):
     cluster_labels = kmeans.fit_predict(code_embeddings)
     
     # Step 2: Train Classification Module
-    # [Implementation omitted for brevity. Use cross-entropy loss on cluster labels]
+    # Train classification module using cross-entropy loss
+    classifier_optimizer = torch.optim.AdamW(model.classifier.parameters(), lr=args.learning_rate)
+    classifier_criterion = CrossEntropyLoss()
+    
+    for epoch in range(args.class_epochs):
+        for batch in dataloader:
+            code_inputs = batch[0].to(args.device)
+            
+            # Get code embeddings and predict clusters
+            code_embs = model(code_inputs=code_inputs)
+            cluster_pred = model.classifier(code_embs)
+            
+            # Get target cluster labels for this batch
+            batch_labels = torch.tensor([cluster_labels[i] for i in range(len(code_inputs))]).to(args.device)
+            
+            # Compute and backprop classification loss
+            loss = classifier_criterion(cluster_pred, batch_labels)
+            loss.backward()
+            classifier_optimizer.step()
+            classifier_optimizer.zero_grad()
     
     # Step 3: Train Hashing Module
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
@@ -135,6 +231,7 @@ def train_coshc(args, model, tokenizer, code_embeddings):
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
+
 
 def evaluate_coshc(args, model, tokenizer):
     """Two-stage evaluation: Hash recall + Re-rank"""
@@ -184,6 +281,103 @@ def evaluate_coshc(args, model, tokenizer):
             results.append(process_scores(scores))
     
     return compute_metrics(results)
+
+
+def allocate_recalls(probs: torch.Tensor, total_recall: int, num_clusters: int) -> torch.Tensor:
+    """
+    Allocate candidates per cluster using CoSHC's distribution strategy
+    Paper Reference: Section 3.2.2 Eq.7
+    
+    Args:
+        probs: Normalized probability distribution over clusters [num_clusters]
+        total_recall: Total candidates to recall (N)
+        num_clusters: Number of clusters (k)
+    
+    Returns:
+        Tensor: Long tensor of shape [num_clusters] with per-cluster recall counts
+    """
+    base_recall = total_recall - num_clusters  # Remaining after 1 per cluster
+    allocations = torch.floor(probs * base_recall).long()
+    
+    # Distribute remainder to highest probability clusters
+    remainder = base_recall - allocations.sum().item()
+    if remainder > 0:
+        _, top_indices = torch.topk(probs - (allocations/base_recall), remainder)
+        allocations[top_indices] += 1
+    
+    # Add minimum 1 per cluster
+    return allocations + 1
+
+
+def process_scores(scores: torch.Tensor, 
+                 candidate_urls: list, 
+                 query_url: str,
+                 total_recall: int) -> dict:
+    """
+    Calculate ranking metrics for a single query
+    Paper Reference: Section 4.4 Evaluation Metrics
+    
+    Args:
+        scores: Cosine similarity scores [num_candidates]
+        candidate_urls: URLs of candidate codes [num_candidates]
+        query_url: Ground truth URL for the query
+        total_recall: Total candidates considered
+    
+    Returns:
+        dict: Contains rank and success flags
+    """
+    # Sort candidates by descending similarity
+    sorted_indices = torch.argsort(scores, descending=True)
+    sorted_urls = [candidate_urls[i] for i in sorted_indices.cpu().numpy()]
+    
+    try:
+        rank = sorted_urls.index(query_url) + 1  # 1-based indexing
+    except ValueError:
+        rank = total_recall + 1  # Not found penalty
+        
+    return {
+        'rank': rank,
+        'success@1': rank <= 1,
+        'success@5': rank <= 5,
+        'success@10': rank <= 10
+    }
+
+
+def compute_metrics(results: list, total_recall: int) -> dict:
+    """
+    Aggregate metrics across all queries
+    Paper Reference: Section 4.5 Experimental Results
+    
+    Args:
+        results: List of metric dicts from process_scores()
+        total_recall: Total candidates considered per query
+    
+    Returns:
+        dict: Final evaluation metrics
+    """
+    ranks = []
+    success_at_1 = []
+    success_at_5 = []
+    success_at_10 = []
+    
+    for res in results:
+        ranks.append(res['rank'])
+        success_at_1.append(res['success@1'])
+        success_at_5.append(res['success@5'])
+        success_at_10.append(res['success@10'])
+    
+    # Calculate MRR (handle not found as rank=total_recall+1)
+    reciprocal_ranks = [1/r if r <= total_recall else 0 for r in ranks]
+    mrr = np.mean(reciprocal_ranks)
+    
+    # Calculate Success@k
+    return {
+        'MRR': round(mrr, 4),
+        'Success@1': round(np.mean(success_at_1), 4),
+        'Success@5': round(np.mean(success_at_5), 4),
+        'Success@10': round(np.mean(success_at_10), 4),
+        'RetrievalTime': None  # Populated separately
+    }
 
 # --------------------------------------------------
 # Main Execution
@@ -243,6 +437,12 @@ def main():
     parser.add_argument("--hash_epochs", default=10, type=int,
                         help="Epochs for hashing module training (Sec 4.2)")
     
+    # Embedding Parameters
+    parser.add_argument("--do_embed", action='store_true',
+                        help="Whether to save code embeddings")
+    parser.add_argument("--embedding_dir", default="./code_embeddings", type=str,
+                        help="Directory to save code embeddings")
+
     # Clustering Parameters
     parser.add_argument("--num_clusters", default=10, type=int,
                         help="Number of code clusters (Sec 3.1.1)")
@@ -278,8 +478,19 @@ def main():
     # build baseline CodeBERT model
     config = RobertaConfig.from_pretrained(args.config_name if args.config_name else args.model_name_or_path)
     tokenizer = RobertaTokenizer.from_pretrained(args.tokenizer_name)
-    _base_model = RobertaModel.from_pretrained(args.model_name_or_path)
+    _base_model = RobertaModel.from_pretrained(args.tokenizer_name)
     base_model = BaseModel(_base_model)
+
+    # load pretrained CodeBERT model
+    base_model.load_state_dict(torch.load(args.model_name_or_path, map_location=args.device), strict=True)
+    base_model.to(args.device)
+
+    # save code embeddings (only need to run once)
+    if args.do_embed and not os.path.exists(args.embedding_dir):
+        os.makedirs(args.embedding_dir)
+        code_dataset = TextDataset(tokenizer, args, args.codebase_file)
+        code_dataloader = DataLoader(code_dataset, batch_size=args.eval_batch_size)
+        save_code_embeddings(base_model, code_dataloader, args.embedding_dir)
 
     # build CoSHC model
     model = CoSHCModel(base_model)
