@@ -15,7 +15,7 @@ import torch # type: ignore
 import json
 import numpy as np
 from sklearn.cluster import KMeans # type: ignore
-from model import Model as BaseModel
+from model import Model as BaseModel, CoSHCModel
 from run import TextDataset
 from torch.nn import CrossEntropyLoss, MSELoss, CosineSimilarity # type: ignore
 from torch.utils.data import DataLoader, Dataset, SequentialSampler # type: ignore
