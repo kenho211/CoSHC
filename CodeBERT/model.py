@@ -14,3 +14,8 @@ class Model(nn.Module):
             return self.code_encoder(code_inputs, attention_mask=code_inputs.ne(1))[1]
         else:
             return self.nl_encoder(nl_inputs, attention_mask=nl_inputs.ne(1))[1]
+        
+    def to(self, device):
+        self.code_encoder.to(device)
+        self.nl_encoder.to(device)
+        return self

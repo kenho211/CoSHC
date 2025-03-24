@@ -181,16 +181,18 @@ def train_coshc(args, model, tokenizer, code_embeddings):
     # Step 1: Code Clustering (Section 3.1.1)
     kmeans = KMeans(n_clusters=args.num_clusters, random_state=args.seed)
     cluster_labels = kmeans.fit_predict(code_embeddings.cpu())
+    logger.info("Code clustering completed")
     
     # Step 2: Train Classification Module
     # Train classification module using cross-entropy loss
-    model = model.to(args.device)
     classifier_optimizer = torch.optim.AdamW(model.classifier.parameters(), lr=args.learning_rate)
     classifier_criterion = CrossEntropyLoss()
+    logger.info("Classification module initialized")
     
     code_dataset = TextDataset(tokenizer, args, args.codebase_file)
     code_dataloader = DataLoader(code_dataset, batch_size=args.eval_batch_size)
     for epoch in range(args.class_epochs):
+        logger.info("Training classification module for epoch %d", epoch)
         for i, batch in enumerate(code_dataloader):
             code_inputs = batch[0].to(args.device)
             
@@ -209,9 +211,12 @@ def train_coshc(args, model, tokenizer, code_embeddings):
             classifier_optimizer.step()
             classifier_optimizer.zero_grad()
     
+    logger.info("Classification module trained")
+
+
     # Step 3: Train Hashing Module
+    logger.info("Training hashing module")
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
-    
     dataset = TextDataset(tokenizer, args, args.train_data_file)
     dataloader = DataLoader(dataset, batch_size=args.train_batch_size)
     
@@ -237,6 +242,8 @@ def train_coshc(args, model, tokenizer, code_embeddings):
             optimizer.step()
             optimizer.zero_grad()
 
+        logger.info("Hashing module trained for epoch %d", epoch)
+    logger.info("Hashing module trained")
 
 def evaluate_coshc(args, model, tokenizer):
     """Two-stage evaluation: Hash recall + Re-rank"""
@@ -482,6 +489,9 @@ def main():
     parser.add_argument("--hash_file", default="hashes.bin", type=str,
                         help="Path to save hash codes")
 
+    parser.add_argument("--debug", action='store_true',
+                        help="Whether to run in debug mode")
+
     args = parser.parse_args()
     print("args: %s", args)
     
@@ -500,11 +510,20 @@ def main():
     _base_model = RobertaModel.from_pretrained(args.tokenizer_name)
     base_model = BaseModel(_base_model)
 
+    if args.debug:
+        logger.info("Debug mode enabled")
+        args.train_batch_size = 1
+        args.eval_batch_size = 1
+        args.num_train_epochs = 1
+        args.hash_epochs = 1
+        args.class_epochs = 1
+
     # load pretrained CodeBERT model
     logger.info("Loading pretrained CodeBERT model from %s", args.model_name_or_path)
     logger.info("output_dir: %s", args.output_dir)
     base_model.load_state_dict(torch.load(args.model_name_or_path, map_location=args.device), strict=True)
     base_model.to(args.device)
+    logger.info("Base model loaded")
 
     # save code embeddings (only need to run once)
     if args.do_embed \
@@ -513,18 +532,26 @@ def main():
         code_dataset = TextDataset(tokenizer, args, args.codebase_file)
         code_dataloader = DataLoader(code_dataset, batch_size=args.eval_batch_size)
         save_code_embeddings(base_model, code_dataloader, args.embedding_dir, args.device)
+        logger.info("Code embeddings saved to %s", args.embedding_dir)
+    else:
+        logger.info("Code embeddings already exist in %s", args.embedding_dir)
 
     # build CoSHC model
     model = CoSHCModel(base_model)
     model = model.to(args.device)
+    logger.info("CoSHC model loaded")
 
     if args.do_train:
         # Load precomputed code embeddings
         code_embeddings = load_code_embeddings(args.embedding_dir, args.device)
         train_coshc(args, model, tokenizer, code_embeddings)
+    else:
+        logger.info("Skipping training")
     
     if args.do_eval:
         evaluate_coshc(args, model, tokenizer)
+    else:
+        logger.info("Skipping evaluation")
 
 if __name__ == "__main__":
     main()
