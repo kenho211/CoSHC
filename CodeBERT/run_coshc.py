@@ -184,21 +184,24 @@ def train_coshc(args, model, tokenizer, code_embeddings):
     
     # Step 2: Train Classification Module
     # Train classification module using cross-entropy loss
+    model = model.to(args.device)
     classifier_optimizer = torch.optim.AdamW(model.classifier.parameters(), lr=args.learning_rate)
     classifier_criterion = CrossEntropyLoss()
     
     code_dataset = TextDataset(tokenizer, args, args.codebase_file)
     code_dataloader = DataLoader(code_dataset, batch_size=args.eval_batch_size)
     for epoch in range(args.class_epochs):
-        for batch in code_dataloader:
+        for i, batch in enumerate(code_dataloader):
             code_inputs = batch[0].to(args.device)
             
             # Get code embeddings and predict clusters
             code_embs = model(code_inputs=code_inputs)
-            cluster_pred = model.classifier.to(args.device)(code_embs)
+            cluster_pred = model.classifier(code_embs)
             
             # Get target cluster labels for this batch
-            batch_labels = torch.tensor([cluster_labels[i] for i in range(len(code_inputs))], dtype=torch.long).to(args.device)
+            start_idx = i * args.eval_batch_size
+            end_idx = start_idx + len(code_inputs)
+            batch_labels = torch.tensor(cluster_labels[start_idx:end_idx], dtype=torch.long).to(args.device)
             
             # Compute and backprop classification loss
             loss = classifier_criterion(cluster_pred, batch_labels)
@@ -513,6 +516,7 @@ def main():
 
     # build CoSHC model
     model = CoSHCModel(base_model)
+    model = model.to(args.device)
 
     if args.do_train:
         # Load precomputed code embeddings
