@@ -27,12 +27,28 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------
 # CoSHC Training Utilities
 # --------------------------------------------------
-def compute_similarity_matrix(embeddings):
+def compute_similarity_matrix(code_embs, nl_embs, beta, eta, batch_size):
     """Compute normalized similarity matrix (Eq 1-3)"""
-    norms = torch.norm(embeddings, p=2, dim=1, keepdim=True)
-    normalized = embeddings / norms
-    S = torch.mm(normalized, normalized.T)
-    S.fill_diagonal_(1.0)  # Section 3.1.2 Eq 3
+    # Normalize code embeddings and compute S_C
+    code_norms = torch.norm(code_embs, p=2, dim=1, keepdim=True)
+    code_normalized = code_embs / code_norms
+    S_C = torch.mm(code_normalized, code_normalized.T)
+    
+    # Normalize nl embeddings and compute S_D
+    nl_norms = torch.norm(nl_embs, p=2, dim=1, keepdim=True)
+    nl_normalized = nl_embs / nl_norms
+    S_D = torch.mm(nl_normalized, nl_normalized.T)
+    
+    # Combine S_C and S_D using beta (Eq 1)
+    S_tilde = beta * S_C + (1 - beta) * S_D
+    
+    # Compute high-order similarity (Eq 2)
+    S_tilde_T = torch.mm(S_tilde, S_tilde.T) / batch_size
+    S = (1 - eta) * S_tilde + eta * S_tilde_T
+    
+    # Set diagonal to 1.0 (Eq 3)
+    S.fill_diagonal_(1.0)
+    
     return S
 
 
@@ -209,26 +225,29 @@ def train_coshc(args, model, tokenizer, code_embeddings):
             # Move data to GPU
             code_inputs = batch[0].to(args.device, non_blocking=True)
             nl_inputs = batch[1].to(args.device, non_blocking=True)
-            
+
             # Get original embeddings
             with torch.no_grad():
-                code_embs = model(code_inputs=code_inputs, return_hash=True)
-                nl_embs = model(nl_inputs=nl_inputs, return_hash=True)
+                code_embs = model(code_inputs=code_inputs)
+                nl_embs = model(nl_inputs=nl_inputs)
+
+            # Compute target similarity matrix before hashing
+            S_target = compute_similarity_matrix(code_embs, nl_embs, args.beta, args.eta, args.train_batch_size)
             
             # Get hash codes
-            B_code = model.code_hash(code_embs)
-            B_nl = model.nl_hash(nl_embs)
+            B_code = model.get_binary_hash(code_embs, is_code=True, apply_tanh=True)
+            B_nl = model.get_binary_hash(nl_embs, is_code=False, apply_tanh=True)
             
-            # Compute target similarity matrix
-            S_target = compute_similarity_matrix(torch.cat([code_embs, nl_embs]))
-            
+            # Normalize hash codes
+            B_code = B_code / torch.norm(B_code, p=2, dim=1, keepdim=True)
+            B_nl = B_nl / torch.norm(B_nl, p=2, dim=1, keepdim=True)
+
             # Compute loss and backprop
-            loss = hashing_loss(B_code, B_nl, S_target)
+            loss = hashing_loss(B_code, B_nl, S_target, mu=args.mu, lambda1=args.lambda1, lambda2=args.lambda2)
             loss.backward()
             
             # Gradient clipping
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-            
             optimizer.step()
             optimizer.zero_grad()
             

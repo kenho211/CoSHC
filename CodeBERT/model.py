@@ -50,22 +50,12 @@ class CoSHCModel(torch.nn.Module):
         # Classification Module (Section 3.2.2)
         self.classifier = torch.nn.Linear(768, num_clusters)
         
-    def forward(self, code_inputs=None, nl_inputs=None, return_hash=False):
+    def forward(self, code_inputs=None, nl_inputs=None):
         if code_inputs is not None:
             embeddings = self.base_model(code_inputs=code_inputs)
-            if return_hash:
-                # Get hash before activation
-                h = self.code_hash[:-1](embeddings)  # Get output before last linear layer
-                # Apply equation 6: tanh(alpha * H)
-                return torch.tanh(self.alpha * h)
             return embeddings
         else:
             embeddings = self.base_model(nl_inputs=nl_inputs)
-            if return_hash:
-                # Get hash before activation
-                h = self.nl_hash[:-1](embeddings)  # Get output before last linear layer
-                # Apply equation 6: tanh(alpha * H)
-                return torch.tanh(self.alpha * h)
             return embeddings
             
     def predict_category(self, nl_inputs):
@@ -73,12 +63,17 @@ class CoSHCModel(torch.nn.Module):
         return torch.softmax(self.classifier(embeddings), dim=-1)
     
 
-    def get_binary_hash(self, inputs, is_code=True):
+    def get_binary_hash(self, inputs, is_code=True, apply_tanh=False):
         """Get binary hash using sign function (equation 5); For inference"""
         if is_code:
             h = self.code_hash[:-1](self.base_model(code_inputs=inputs))
         else:
             h = self.nl_hash[:-1](self.base_model(nl_inputs=inputs))
+        
+        # Apply equation 6: tanh(alpha * H)
+        if apply_tanh:
+            h = torch.tanh(self.alpha * h)
+
         return torch.sign(h)  # Equation 5
 
 
