@@ -31,6 +31,7 @@ class CoSHCModel(torch.nn.Module):
     def __init__(self, base_model, hash_dim=128, num_clusters=10):
         super().__init__()
         self.base_model = base_model
+        self.alpha = 1.0 # Initial alpha value for scaling factor (will increase during training)
         
         # Hashing Module (Section 3.1.2)
         self.code_hash = torch.nn.Sequential(
@@ -55,17 +56,40 @@ class CoSHCModel(torch.nn.Module):
         if code_inputs is not None:
             embeddings = self.base_model(code_inputs=code_inputs)
             if return_hash:
-                return self.code_hash(embeddings)
+                # Get hash before activation
+                h = self.code_hash[:-1](embeddings)  # Get output before last linear layer
+                # Apply equation 6: tanh(alpha * H)
+                return torch.tanh(self.alpha * h)
             return embeddings
         else:
             embeddings = self.base_model(nl_inputs=nl_inputs)
             if return_hash:
-                return self.nl_hash(embeddings)
+                # Get hash before activation
+                h = self.nl_hash[:-1](embeddings)  # Get output before last linear layer
+                # Apply equation 6: tanh(alpha * H)
+                return torch.tanh(self.alpha * h)
             return embeddings
             
     def predict_category(self, nl_inputs):
         embeddings = self.base_model(nl_inputs=nl_inputs)
         return torch.softmax(self.classifier(embeddings), dim=-1)
+    
+
+    def get_binary_hash(self, inputs, is_code=True):
+        """Get binary hash using sign function (equation 5); For inference"""
+        if is_code:
+            h = self.code_hash[:-1](self.base_model(code_inputs=inputs))
+        else:
+            h = self.nl_hash[:-1](self.base_model(nl_inputs=inputs))
+        return torch.sign(h)  # Equation 5
+
+
+    def to(self, device):
+        self.base_model.to(device)
+        self.code_hash.to(device)
+        self.nl_hash.to(device)
+        self.classifier.to(device)
+        return self
 
 # --------------------------------------------------
 # CoSHC Training Utilities
@@ -77,6 +101,7 @@ def compute_similarity_matrix(embeddings):
     S = torch.mm(normalized, normalized.T)
     S.fill_diagonal_(1.0)  # Section 3.1.2 Eq 3
     return S
+
 
 def hashing_loss(B_code, B_nl, S_target, mu=1.5, lambda1=0.1, lambda2=0.1):
     """Deep hashing loss function (Section 3.1.2 Eq 4)"""
@@ -186,7 +211,7 @@ def train_coshc(args, model, tokenizer, code_embeddings):
     logger.info("Code clustering completed")
     
     # Step 2: Train Classification Module
-    model.train()  # Set model to training mode once
+    model.train()
     classifier_optimizer = torch.optim.AdamW(model.classifier.parameters(), lr=args.learning_rate)
     classifier_criterion = CrossEntropyLoss()
     logger.info("Classification module initialized")
@@ -224,6 +249,10 @@ def train_coshc(args, model, tokenizer, code_embeddings):
             # Log progress every N batches
             if (i + 1) % 100 == 0:
                 logger.info(f"Epoch {epoch}, Batch {i+1}, Avg Loss: {total_loss / (i+1):.4f}")
+
+            if args.debug:
+                if (i + 1) % 500 == 0:
+                    break
         
         logger.info(f"Epoch {epoch} completed, Avg Loss: {total_loss / len(code_dataloader):.4f}")
 
@@ -231,17 +260,27 @@ def train_coshc(args, model, tokenizer, code_embeddings):
     # Step 3: Train Hashing Module
     logger.info("Training hashing module")
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
+    
+    # Add learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.hash_epochs)
+    
     dataset = TextDataset(tokenizer, args, args.train_data_file)
-    dataloader = DataLoader(dataset, batch_size=args.train_batch_size)
+    dataloader = DataLoader(dataset, 
+                          batch_size=args.train_batch_size,
+                          num_workers=4,
+                          pin_memory=True)
     
     for epoch in range(args.hash_epochs):
-        for batch in dataloader:
-            code_inputs, nl_inputs = batch
+        total_loss = 0
+        for i, batch in enumerate(dataloader):
+            # Move data to GPU
+            code_inputs = batch[0].to(args.device, non_blocking=True)
+            nl_inputs = batch[1].to(args.device, non_blocking=True)
             
             # Get original embeddings
             with torch.no_grad():
-                code_embs = model(code_inputs=code_inputs)
-                nl_embs = model(nl_inputs=nl_inputs)
+                code_embs = model(code_inputs=code_inputs, return_hash=True)
+                nl_embs = model(nl_inputs=nl_inputs, return_hash=True)
             
             # Get hash codes
             B_code = model.code_hash(code_embs)
@@ -250,14 +289,51 @@ def train_coshc(args, model, tokenizer, code_embeddings):
             # Compute target similarity matrix
             S_target = compute_similarity_matrix(torch.cat([code_embs, nl_embs]))
             
-            # Compute and backprop loss
+            # Compute loss and backprop
             loss = hashing_loss(B_code, B_nl, S_target)
             loss.backward()
+            
+            # Gradient clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+            
             optimizer.step()
             optimizer.zero_grad()
+            
+            total_loss += loss.item()
+            
+            # Log progress every N batches
+            if (i + 1) % 50 == 0:
+                avg_loss = total_loss / (i + 1)
+                logger.info(f"Epoch {epoch}, Batch {i+1}, Avg Loss: {avg_loss:.4f}")
+            
+            # Clear GPU cache periodically
+            if (i + 1) % 500 == 0:
+                torch.cuda.empty_cache()
+            
+            if args.debug and (i + 1) % 500 == 0:
+                break
 
-        logger.info("Hashing module trained for epoch %d", epoch)
-    logger.info("Hashing module trained")
+        
+        # Step learning rate scheduler
+        scheduler.step()
+        
+        # Log epoch stats
+        avg_epoch_loss = total_loss / len(dataloader)
+        logger.info(f"Epoch {epoch} completed, Avg Loss: {avg_epoch_loss:.4f}")
+        model.alpha += 1.0
+        
+        # Save checkpoint after each epoch
+        if not args.debug:
+            checkpoint = {
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'loss': avg_epoch_loss,
+            }
+            torch.save(checkpoint, os.path.join(args.output_dir, f'hash_checkpoint_epoch_{epoch}.pt'))
+    
+    logger.info("Hashing module training completed")
 
 def evaluate_coshc(args, model, tokenizer):
     """Two-stage evaluation: Hash recall + Re-rank"""
@@ -268,7 +344,7 @@ def evaluate_coshc(args, model, tokenizer):
     # Precompute code representations
     for batch in DataLoader(code_dataset, batch_size=args.eval_batch_size):
         code_embs.append(model(code_inputs=batch[0].to(args.device)))
-        code_hashes.append(torch.sign(model.code_hash(code_embs[-1])))
+        code_hashes.append(model.get_binary_hash(batch[0].to(args.device), is_code=True))
         code_clusters.append(model.classifier(code_embs[-1]).argmax(dim=1))
     
     code_embs = torch.cat(code_embs)
@@ -281,7 +357,7 @@ def evaluate_coshc(args, model, tokenizer):
     
     for query_batch in DataLoader(query_dataset, batch_size=args.eval_batch_size):
         nl_embs = model(nl_inputs=query_batch[1].to(args.device))
-        nl_hashes = torch.sign(model.nl_hash(nl_embs))
+        nl_hashes = model.get_binary_hash(query_batch[1].to(args.device), is_code=False)
         
         # Stage 1: Category Prediction (Section 3.2.2)
         probs = torch.softmax(model.classifier(nl_embs), dim=1)
