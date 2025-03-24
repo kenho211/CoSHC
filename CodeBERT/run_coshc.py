@@ -181,37 +181,51 @@ def train_coshc(args, model, tokenizer, code_embeddings):
     # Step 1: Code Clustering (Section 3.1.1)
     kmeans = KMeans(n_clusters=args.num_clusters, random_state=args.seed)
     cluster_labels = kmeans.fit_predict(code_embeddings.cpu())
+    # Convert cluster labels to tensor once, instead of inside loop
+    cluster_labels = torch.tensor(cluster_labels, dtype=torch.long).to(args.device)
     logger.info("Code clustering completed")
     
     # Step 2: Train Classification Module
-    # Train classification module using cross-entropy loss
+    model.train()  # Set model to training mode once
     classifier_optimizer = torch.optim.AdamW(model.classifier.parameters(), lr=args.learning_rate)
     classifier_criterion = CrossEntropyLoss()
     logger.info("Classification module initialized")
     
     code_dataset = TextDataset(tokenizer, args, args.codebase_file)
-    code_dataloader = DataLoader(code_dataset, batch_size=args.eval_batch_size)
+    # Increase num_workers for faster data loading
+    code_dataloader = DataLoader(code_dataset, 
+                               batch_size=args.eval_batch_size,
+                               num_workers=4,
+                               pin_memory=True)  # Enable pin_memory for faster GPU transfer
+    
     for epoch in range(args.class_epochs):
-        logger.info("Training classification module for epoch %d", epoch)
+        total_loss = 0
         for i, batch in enumerate(code_dataloader):
-            code_inputs = batch[0].to(args.device)
+            # Move entire batch to GPU at once
+            code_inputs = batch[0].to(args.device, non_blocking=True)
             
-            # Get code embeddings and predict clusters
+            # Get batch labels directly from pre-computed tensor
+            start_idx = i * args.eval_batch_size
+            end_idx = start_idx + len(code_inputs)
+            batch_labels = cluster_labels[start_idx:end_idx]
+            
+            # Forward pass
             code_embs = model(code_inputs=code_inputs)
             cluster_pred = model.classifier(code_embs)
             
-            # Get target cluster labels for this batch
-            start_idx = i * args.eval_batch_size
-            end_idx = start_idx + len(code_inputs)
-            batch_labels = torch.tensor(cluster_labels[start_idx:end_idx], dtype=torch.long).to(args.device)
-            
-            # Compute and backprop classification loss
+            # Compute loss and backprop
             loss = classifier_criterion(cluster_pred, batch_labels)
             loss.backward()
             classifier_optimizer.step()
             classifier_optimizer.zero_grad()
-    
-    logger.info("Classification module trained")
+            
+            total_loss += loss.item()
+            
+            # Log progress every N batches
+            if (i + 1) % 100 == 0:
+                logger.info(f"Epoch {epoch}, Batch {i+1}, Avg Loss: {total_loss / (i+1):.4f}")
+        
+        logger.info(f"Epoch {epoch} completed, Avg Loss: {total_loss / len(code_dataloader):.4f}")
 
 
     # Step 3: Train Hashing Module
