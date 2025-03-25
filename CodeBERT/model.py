@@ -37,14 +37,16 @@ class CoSHCModel(torch.nn.Module):
             torch.nn.Tanh(),
             torch.nn.Linear(768, 768),
             torch.nn.Tanh(),
-            torch.nn.Linear(768, hash_dim)
+            torch.nn.Linear(768, hash_dim),
+            torch.nn.Tanh()
         )
         self.nl_hash = torch.nn.Sequential(
             torch.nn.Linear(768, 768),
             torch.nn.Tanh(),
             torch.nn.Linear(768, 768),
             torch.nn.Tanh(),
-            torch.nn.Linear(768, hash_dim)
+            torch.nn.Linear(768, hash_dim),
+            torch.nn.Tanh()
         )
         
         # Classification Module (Section 3.2.2)
@@ -66,9 +68,9 @@ class CoSHCModel(torch.nn.Module):
     def get_binary_hash(self, inputs, is_code=True, apply_tanh=False):
         """Get binary hash using sign function (equation 5); For inference"""
         if is_code:
-            h = self.code_hash[:-1](self.base_model(code_inputs=inputs))
+            h = self.code_hash[:-1](inputs)
         else:
-            h = self.nl_hash[:-1](self.base_model(nl_inputs=inputs))
+            h = self.nl_hash[:-1](inputs)
         
         # Apply equation 6: tanh(alpha * H)
         if apply_tanh:
