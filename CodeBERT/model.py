@@ -74,9 +74,9 @@ class CoSHCModel(torch.nn.Module):
         
         # Apply equation 6: tanh(alpha * H)
         if apply_tanh:
-            h = torch.tanh(self.alpha * h)
-
-        return torch.sign(h)  # Equation 5
+            return torch.tanh(self.alpha * h)
+        else:
+            return torch.sign(h)  # Equation 5
 
 
     def to(self, device):
