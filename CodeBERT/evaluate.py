@@ -235,11 +235,11 @@ def print_results_table(dataset_name, baseline_results, coshc_results):
 
 if __name__ == "__main__":
     # Evaluate Python dataset
-    py_baseline = evaluate_baseline("python")
     py_coshc = evaluate_coshc("python")
+    py_baseline = evaluate_baseline("python")
     print_results_table("Python", py_baseline, py_coshc)
 
     # Evaluate Java dataset
-    java_baseline = evaluate_baseline("java")
     java_coshc = evaluate_coshc("java")
+    java_baseline = evaluate_baseline("java")
     print_results_table("Java", java_baseline, java_coshc)
