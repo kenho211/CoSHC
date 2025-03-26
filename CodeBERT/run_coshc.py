@@ -631,7 +631,10 @@ def main(args=None):
         logger.info("Skipping training")
     
     if args.do_eval:
-        evaluate_coshc(args, model, tokenizer)
+        coshc_model = CoSHCModel(base_model, hash_dim=128, num_clusters=10)
+        checkpoint = torch.load(args.coshc_checkpoint_path, map_location=device)
+        coshc_model.load_state_dict(checkpoint['model_state_dict'])
+        evaluate_coshc(args, coshc_model, tokenizer)
     else:
         logger.info("Skipping evaluation")
 

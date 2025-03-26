@@ -176,6 +176,8 @@ def evaluate_coshc(dataset_type):
     parser.add_argument("--debug", action='store_true',
                         help="Whether to run in debug mode")
 
+    parser.add_argument("--coshc_checkpoint_path", default=None, type=str,
+                        help="Path to CoSHC checkpoint")
 
     args_list = [
         "--do_eval",
@@ -184,7 +186,8 @@ def evaluate_coshc(dataset_type):
         "--codebase_file", f"/content/data/{dataset_type}/codebase.jsonl",
         "--output_dir", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_coshc",
         "--config_name", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_coshc",
-        "--model_name_or_path", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_coshc/hash_checkpoint_epoch_9.pt",
+        "--model_name_or_path", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_baseline/checkpoint-best-mrr/pytorch_model.bin",
+        "--coshc_checkpoint_path", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_coshc/hash_checkpoint_epoch_9.pt",
         "--tokenizer_name", "microsoft/codebert-base",
         "--do_embed",
         "--embedding_dir", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_coshc/code_embeddings",
