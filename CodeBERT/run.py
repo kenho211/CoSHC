@@ -381,7 +381,7 @@ def main(args=None):
     # Evaluation
     results = {}
     if args.do_eval:
-        checkpoint_prefix = 'checkpoint-best-mrr/model.bin'
+        checkpoint_prefix = 'checkpoint-best-mrr/pytorch_model.bin'
         output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))  
         # model.load_state_dict(torch.load(output_dir),strict=False) 
         model.load_state_dict(torch.load(output_dir, map_location=args.device), strict=True)     
@@ -392,7 +392,7 @@ def main(args=None):
             logger.info("  %s = %s", key, str(round(result[key],4)))
             
     if args.do_test:
-        checkpoint_prefix = 'checkpoint-best-mrr/model.bin'
+        checkpoint_prefix = 'checkpoint-best-mrr/pytorch_model.bin'
         output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))  
         # model.load_state_dict(torch.load(output_dir),strict=False)
         model.load_state_dict(torch.load(output_dir, map_location=args.device), strict=True)
