@@ -60,6 +60,7 @@ def evaluate_baseline(dataset_type):
         "--codebase_file", f"/content/data/{dataset_type}/codebase.jsonl",
         "--output_dir", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_baseline",
         "--model_name_or_path", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_baseline/checkpoint-best-mrr",
+        "--tokenizer_name", "microsoft/codebert-base",
         "--eval_batch_size", "64"
     ]
     
@@ -183,6 +184,9 @@ def evaluate_coshc(dataset_type):
         "--codebase_file", f"/content/data/{dataset_type}/codebase.jsonl",
         "--output_dir", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_coshc",
         "--model_name_or_path", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_coshc/hash_checkpoint_epoch_9.pt",
+        "--tokenizer_name", "microsoft/codebert-base",
+        "--do_embed",
+        "--embedding_dir", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_coshc/code_embeddings",
         "--eval_batch_size", "64",
         "--num_clusters", "10",
         "--total_recall", "100"
