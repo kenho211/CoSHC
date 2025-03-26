@@ -9,6 +9,7 @@ Reference: 2022 ACL Paper (Section 3: Method)
 import argparse
 import logging
 import os
+import time
 import pickle
 import random
 import torch # type: ignore
@@ -21,7 +22,6 @@ from torch.nn import CrossEntropyLoss, MSELoss, CosineSimilarity # type: ignore
 from torch.utils.data import DataLoader, Dataset, SequentialSampler # type: ignore
 from transformers import RobertaConfig, RobertaTokenizer, RobertaModel # type: ignore
 from datetime import datetime
-import time
 
 logger = logging.getLogger(__name__)
 
