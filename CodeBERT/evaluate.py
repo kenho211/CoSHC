@@ -183,6 +183,7 @@ def evaluate_coshc(dataset_type):
         "--eval_data_file", f"/content/data/{dataset_type}/test.jsonl",
         "--codebase_file", f"/content/data/{dataset_type}/codebase.jsonl",
         "--output_dir", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_coshc",
+        "--config_name", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_coshc",
         "--model_name_or_path", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_coshc/hash_checkpoint_epoch_9.pt",
         "--tokenizer_name", "microsoft/codebert-base",
         "--do_embed",
