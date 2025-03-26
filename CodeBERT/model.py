@@ -8,16 +8,7 @@ class Model(nn.Module):
     def __init__(self, encoder):
         super(Model, self).__init__()
         self.code_encoder = encoder
-        
-        # Clone the configuration to ensure exact same architecture
-        config = encoder.config
-        config.max_position_embeddings = 514  # Match the checkpoint architecture
-        config.type_vocab_size = 1  # Match the checkpoint architecture
-        
-        # Initialize nl_encoder with the same config
-        self.nl_encoder = RobertaModel(config)
-        # Copy the embeddings and other parameters from code_encoder
-        self.nl_encoder.load_state_dict(encoder.state_dict())
+        self.nl_encoder = RobertaModel.from_pretrained(encoder.config._name_or_path)  # Clone for NL
         
     def forward(self, code_inputs=None, nl_inputs=None):
         if code_inputs is not None:

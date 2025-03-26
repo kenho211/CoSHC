@@ -368,8 +368,8 @@ def main(args=None):
     #build model
     config = RobertaConfig.from_pretrained(args.config_name if args.config_name else args.model_name_or_path)
     tokenizer = RobertaTokenizer.from_pretrained(args.tokenizer_name)
-    base_model = RobertaModel.from_pretrained(args.model_name_or_path)
-    model = Model(base_model)
+    _base_model = RobertaModel.from_pretrained(args.tokenizer_name)
+    model = Model(_base_model)
 
     logger.info("Training/evaluation parameters %s", args)
     model.to(args.device)
