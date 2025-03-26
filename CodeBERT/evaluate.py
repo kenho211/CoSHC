@@ -55,6 +55,7 @@ def evaluate_baseline(dataset_type):
 
     args_list = [
         "--do_eval",
+        "--train_data_file", f"/content/data/{dataset_type}/train.jsonl", # not used, only because it is required in run.py
         "--eval_data_file", f"/content/data/{dataset_type}/test.jsonl",
         "--codebase_file", f"/content/data/{dataset_type}/codebase.jsonl",
         "--output_dir", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_baseline",
@@ -177,6 +178,7 @@ def evaluate_coshc(dataset_type):
 
     args_list = [
         "--do_eval",
+        "--train_data_file", f"/content/data/{dataset_type}/train.jsonl", # not used, only because it is required by in run_coshc.py
         "--eval_data_file", f"/content/data/{dataset_type}/test.jsonl",
         "--codebase_file", f"/content/data/{dataset_type}/codebase.jsonl",
         "--output_dir", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_coshc",
