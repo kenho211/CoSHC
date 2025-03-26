@@ -26,6 +26,7 @@ import pickle
 import random
 import torch # type: ignore
 import json
+import time
 import numpy as np
 from model import Model
 from torch.nn import CrossEntropyLoss, MSELoss # type: ignore
@@ -227,10 +228,19 @@ def evaluate(args, model, tokenizer,file_name,eval_when_training=False):
     code_vecs=np.concatenate(code_vecs,0)
     nl_vecs=np.concatenate(nl_vecs,0)
 
+    # Vector Similarity Calculation
+    start_time = time.time()
     scores=np.matmul(nl_vecs,code_vecs.T)
-    
+    similarity_time = time.time() - start_time
+
+    # Array Sorting
+    start_time = time.time()
     sort_ids=np.argsort(scores, axis=-1, kind='quicksort', order=None)[:,::-1]    
-    
+    sorting_time = time.time() - start_time
+
+    # Total Retrieval Time
+    total_retrieval_time = similarity_time + sorting_time
+
     nl_urls=[]
     code_urls=[]
     for example in query_dataset.examples:
@@ -275,13 +285,17 @@ def evaluate(args, model, tokenizer,file_name,eval_when_training=False):
         else:
             ranks.append(0)
 
+    end_time = time.time()
+    retrieval_time = end_time - start_time
     result = {
         "Success@1": np.mean(success_at_1),
         "Success@5": np.mean(success_at_5),
         "Success@10": np.mean(success_at_10),
-        "MRR": np.mean(ranks)
+        "MRR": np.mean(ranks),
+        "RetrievalTime": total_retrieval_time,
+        "SimilarityTime": similarity_time,
+        "SortingTime": sorting_time,
     }
-
     return result
 
                         

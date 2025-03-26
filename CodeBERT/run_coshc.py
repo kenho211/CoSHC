@@ -21,6 +21,7 @@ from torch.nn import CrossEntropyLoss, MSELoss, CosineSimilarity # type: ignore
 from torch.utils.data import DataLoader, Dataset, SequentialSampler # type: ignore
 from transformers import RobertaConfig, RobertaTokenizer, RobertaModel # type: ignore
 from datetime import datetime
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -289,6 +290,9 @@ def evaluate_coshc(args, model, tokenizer):
     code_dataset = TextDataset(tokenizer, args, args.codebase_file)
     code_embs, code_hashes, code_clusters = [], [], []
     
+    # Extract code URLs once
+    code_urls = [example.url for example in code_dataset.examples]
+    
     # Precompute code representations
     for batch in DataLoader(code_dataset, batch_size=args.eval_batch_size):
         code_embs.append(model(code_inputs=batch[0].to(args.device)))
@@ -301,8 +305,14 @@ def evaluate_coshc(args, model, tokenizer):
     
     # Process queries
     query_dataset = TextDataset(tokenizer, args, args.eval_data_file)
-    results = []
+    query_urls = [example.url for example in query_dataset.examples]
     
+    results = []
+    similarity_time = 0
+    sorting_time = 0
+    query_index = 0
+    overall_start_time = time.time()
+
     for query_batch in DataLoader(query_dataset, batch_size=args.eval_batch_size):
         nl_embs = model(nl_inputs=query_batch[1].to(args.device))
         nl_hashes = model.get_binary_hash(query_batch[1].to(args.device), is_code=False)
@@ -310,8 +320,13 @@ def evaluate_coshc(args, model, tokenizer):
         # Stage 1: Category Prediction (Section 3.2.2)
         probs = torch.softmax(model.classifier(nl_embs), dim=1)
         
+        query_urls = [example.url for example in query_batch]
+        
         # Stage 2: Hash-based Recall (Section 3.2.1)
         for i in range(len(nl_embs)):
+            # Get current query URL
+            query_url = query_urls[query_index]
+            
             # Calculate Hamming distance
             dists = (code_hashes != nl_hashes[i]).sum(dim=1)
             
@@ -320,17 +335,40 @@ def evaluate_coshc(args, model, tokenizer):
             
             # Re-rank with original embeddings (Section 3.2.1)
             candidates = []
+            candidate_indices = []  # Track indices for URL mapping
+            
             for cluster_id, count in enumerate(recall_counts):
                 mask = (code_clusters == cluster_id)
                 cluster_dists = dists[mask]
+                # Get indices within cluster
                 cluster_indices = cluster_dists.topk(count, largest=False).indices
+                # Map to original indices
+                original_indices = torch.where(mask)[0][cluster_indices]
+                candidate_indices.extend(original_indices.tolist())
                 candidates.append(code_embs[mask][cluster_indices])
             
             candidates = torch.cat(candidates)
+            
+            start_time = time.time()
             scores = CosineSimilarity(dim=1)(candidates, nl_embs[i])
-            results.append(process_scores(scores))
+            similarity_time += time.time() - start_time
+            
+            # Get candidate URLs using tracked indices
+            batch_candidate_urls = [code_urls[idx] for idx in candidate_indices]
+            
+            result = process_scores(scores, batch_candidate_urls, query_url, args.total_recall)
+            sorting_time += result['sorting_time']
+            results.append(result)
+            
+            query_index += 1
     
-    return compute_metrics(results)
+    end_time = time.time()
+    retrieval_time = end_time - overall_start_time
+    metrics = compute_metrics(results, args.total_recall)
+    metrics["RetrievalTime"] = retrieval_time
+    metrics["SimilarityTime"] = similarity_time
+    metrics["SortingTime"] = sorting_time
+    return metrics
 
 
 def allocate_recalls(probs: torch.Tensor, total_recall: int, num_clusters: int) -> torch.Tensor:
@@ -376,10 +414,13 @@ def process_scores(scores: torch.Tensor,
     Returns:
         dict: Contains rank and success flags
     """
+    start_time = time.time()
+
     # Sort candidates by descending similarity
     sorted_indices = torch.argsort(scores, descending=True)
+    sorting_time = time.time() - start_time
+
     sorted_urls = [candidate_urls[i] for i in sorted_indices.cpu().numpy()]
-    
     try:
         rank = sorted_urls.index(query_url) + 1  # 1-based indexing
     except ValueError:
@@ -389,7 +430,8 @@ def process_scores(scores: torch.Tensor,
         'rank': rank,
         'success@1': rank <= 1,
         'success@5': rank <= 5,
-        'success@10': rank <= 10
+        'success@10': rank <= 10,
+        'sorting_time': sorting_time
     }
 
 
@@ -426,7 +468,7 @@ def compute_metrics(results: list, total_recall: int) -> dict:
         'Success@1': round(np.mean(success_at_1), 4),
         'Success@5': round(np.mean(success_at_5), 4),
         'Success@10': round(np.mean(success_at_10), 4),
-        'RetrievalTime': None  # Populated separately
+        'RetrievalTime': None,
     }
 
 # --------------------------------------------------
