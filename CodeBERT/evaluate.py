@@ -9,10 +9,10 @@ def evaluate_baseline(dataset_type):
     
     args = [
         "--do_eval",
-        "--eval_data_file", f"data/{dataset_type}/test.jsonl",
-        "--codebase_file", f"data/{dataset_type}/codebase.jsonl",
-        "--output_dir", "saved_models/baseline",
-        "--model_name_or_path", "saved_models/baseline/checkpoint-best-mrr/model.bin",
+        "--eval_data_file", f"/content/data/{dataset_type}/test.jsonl",
+        "--codebase_file", f"/content/data/{dataset_type}/codebase.jsonl",
+        "--output_dir", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_baseline",
+        "--model_name_or_path", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_baseline/checkpoint-best-mrr",
         "--eval_batch_size", "64"
     ]
     
@@ -36,10 +36,10 @@ def evaluate_coshc(dataset_type):
     
     args = [
         "--do_eval",
-        "--eval_data_file", f"data/{dataset_type}/test.jsonl",
-        "--codebase_file", f"data/{dataset_type}/codebase.jsonl",
-        "--output_dir", "saved_models/coshc",
-        "--model_name_or_path", "saved_models/coshc/hash_checkpoint_epoch_9.pt",
+        "--eval_data_file", f"/content/data/{dataset_type}/test.jsonl",
+        "--codebase_file", f"/content/data/{dataset_type}/codebase.jsonl",
+        "--output_dir", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_coshc",
+        "--model_name_or_path", f"/content/drive/MyDrive/CoSHC/CodeBERT/models/{dataset_type}_coshc/hash_checkpoint_epoch_9.pt",
         "--eval_batch_size", "64",
         "--num_clusters", "10",
         "--total_recall", "100"
