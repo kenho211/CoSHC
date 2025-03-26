@@ -300,58 +300,59 @@ def evaluate(args, model, tokenizer,file_name,eval_when_training=False):
 
                         
                         
-def main():
-    parser = argparse.ArgumentParser()
+def main(args=None):
+    if args is None:
+        parser = argparse.ArgumentParser()
 
-    ## Required parameters
-    parser.add_argument("--train_data_file", default=None, type=str, required=True,
-                        help="The input training data file (a json file).")
-    parser.add_argument("--output_dir", default=None, type=str, required=True,
-                        help="The output directory where the model predictions and checkpoints will be written.")
-    parser.add_argument("--eval_data_file", default=None, type=str,
-                        help="An optional input evaluation data file to evaluate the MRR(a jsonl file).")
-    parser.add_argument("--test_data_file", default=None, type=str,
-                        help="An optional input test data file to test the MRR(a josnl file).")
-    parser.add_argument("--codebase_file", default=None, type=str,
-                        help="An optional input test data file to codebase (a jsonl file).")  
-    
-    parser.add_argument("--model_name_or_path", default=None, type=str,
-                        help="The model checkpoint for weights initialization.")
-    parser.add_argument("--config_name", default="", type=str,
-                        help="Optional pretrained config name or path if not the same as model_name_or_path")
-    parser.add_argument("--tokenizer_name", default="", type=str,
-                        help="Optional pretrained tokenizer name or path if not the same as model_name_or_path")
-    
-    parser.add_argument("--nl_length", default=128, type=int,
-                        help="Optional NL input sequence length after tokenization.")    
-    parser.add_argument("--code_length", default=256, type=int,
-                        help="Optional Code input sequence length after tokenization.") 
-    
-    parser.add_argument("--do_train", action='store_true',
-                        help="Whether to run training.")
-    parser.add_argument("--do_eval", action='store_true',
-                        help="Whether to run eval on the dev set.")
-    parser.add_argument("--do_test", action='store_true',
-                        help="Whether to run eval on the test set.")  
-    
+        ## Required parameters
+        parser.add_argument("--train_data_file", default=None, type=str, required=True,
+                            help="The input training data file (a json file).")
+        parser.add_argument("--output_dir", default=None, type=str, required=True,
+                            help="The output directory where the model predictions and checkpoints will be written.")
+        parser.add_argument("--eval_data_file", default=None, type=str,
+                            help="An optional input evaluation data file to evaluate the MRR(a jsonl file).")
+        parser.add_argument("--test_data_file", default=None, type=str,
+                            help="An optional input test data file to test the MRR(a josnl file).")
+        parser.add_argument("--codebase_file", default=None, type=str,
+                            help="An optional input test data file to codebase (a jsonl file).")  
+        
+        parser.add_argument("--model_name_or_path", default=None, type=str,
+                            help="The model checkpoint for weights initialization.")
+        parser.add_argument("--config_name", default="", type=str,
+                            help="Optional pretrained config name or path if not the same as model_name_or_path")
+        parser.add_argument("--tokenizer_name", default="", type=str,
+                            help="Optional pretrained tokenizer name or path if not the same as model_name_or_path")
+        
+        parser.add_argument("--nl_length", default=128, type=int,
+                            help="Optional NL input sequence length after tokenization.")    
+        parser.add_argument("--code_length", default=256, type=int,
+                            help="Optional Code input sequence length after tokenization.") 
+        
+        parser.add_argument("--do_train", action='store_true',
+                            help="Whether to run training.")
+        parser.add_argument("--do_eval", action='store_true',
+                            help="Whether to run eval on the dev set.")
+        parser.add_argument("--do_test", action='store_true',
+                            help="Whether to run eval on the test set.")  
+        
 
-    parser.add_argument("--train_batch_size", default=4, type=int,
-                        help="Batch size for training.")
-    parser.add_argument("--eval_batch_size", default=4, type=int,
-                        help="Batch size for evaluation.")
-    parser.add_argument("--learning_rate", default=5e-5, type=float,
-                        help="The initial learning rate for Adam.")
-    parser.add_argument("--max_grad_norm", default=1.0, type=float,
-                        help="Max gradient norm.")
-    parser.add_argument("--num_train_epochs", default=1, type=int,
-                        help="Total number of training epochs to perform.")
+        parser.add_argument("--train_batch_size", default=4, type=int,
+                            help="Batch size for training.")
+        parser.add_argument("--eval_batch_size", default=4, type=int,
+                            help="Batch size for evaluation.")
+        parser.add_argument("--learning_rate", default=5e-5, type=float,
+                            help="The initial learning rate for Adam.")
+        parser.add_argument("--max_grad_norm", default=1.0, type=float,
+                            help="Max gradient norm.")
+        parser.add_argument("--num_train_epochs", default=1, type=int,
+                            help="Total number of training epochs to perform.")
 
-    parser.add_argument('--seed', type=int, default=42,
-                        help="random seed for initialization")
+        parser.add_argument('--seed', type=int, default=42,
+                            help="random seed for initialization")
     
-    #print arguments
-    args = parser.parse_args()
-    
+        #print arguments
+        args = parser.parse_args()
+        
     #set log
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S',level=logging.INFO )
@@ -406,5 +407,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
