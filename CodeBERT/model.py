@@ -71,9 +71,6 @@ class CoSHCModel(torch.nn.Module):
 
         print(inputs.device)
         print(self.code_hash[0].weight.device)
-        print(self.code_hash[:-1].weight.device)
-        print(self.code_hash[-1].weight.device)
-        print(self.code_hash.device)
         if is_code:
             h = self.code_hash[:-1](inputs)
         else:
