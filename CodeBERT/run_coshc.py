@@ -325,10 +325,9 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
     results = []
     similarity_time = 0
     sorting_time = 0
-    query_index = 0
     overall_start_time = time.time()
 
-    for query_batch in query_dataloader:
+    for query_index, query_batch in enumerate(query_dataloader):
         # Move data to GPU
         nl_inputs = query_batch[1].to(args.device, non_blocking=True)
         # Get original embeddings
@@ -340,7 +339,9 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
         # Stage 1: Category Prediction (Section 3.2.2)
         probs = torch.softmax(model.classifier(nl_embs), dim=1)
         
-        query_batch_urls = [example.url for example in query_batch]
+        start_idx = query_index * args.eval_batch_size
+        end_idx = start_idx + len(nl_inputs)
+        query_batch_urls = query_urls[start_idx:end_idx]
         
         # Stage 2: Hash-based Recall (Section 3.2.1)
         for i in range(len(nl_embs)):
