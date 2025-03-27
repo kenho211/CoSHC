@@ -296,12 +296,13 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
     code_sampler = SequentialSampler(code_dataset)
     code_dataloader = DataLoader(code_dataset, sampler=code_sampler, batch_size=args.eval_batch_size,num_workers=4)
     
-    # Precompute code representations
     all_code_embs = []
     all_code_hashes = []
     all_code_clusters = []
 
-    for batch in code_dataloader:
+    # Precompute code representations
+    logger.info("Precomputing code representations")
+    for batch in code_dataloader[:100]:
         # Move data to GPU
         code_inputs = batch[0].to(args.device, non_blocking=True)
 
@@ -320,6 +321,8 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
     all_code_embs = torch.cat(all_code_embs)
     all_code_hashes = torch.cat(all_code_hashes)
     all_code_clusters = torch.cat(all_code_clusters)
+    logger.info("Precomputing code representations completed")
+
 
     # Process queries
     results = []
@@ -327,7 +330,10 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
     sorting_time = 0
     overall_start_time = time.time()
 
+    logger.info("Processing queries")
     for query_index, query_batch in enumerate(query_dataloader):
+        logger.info(f"Processing query batch {query_index} of {len(query_dataloader)}")
+
         # Move data to GPU
         nl_inputs = query_batch[1].to(args.device, non_blocking=True)
         # Get original embeddings
@@ -338,6 +344,7 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
         
         # Stage 1: Category Prediction (Section 3.2.2)
         probs = torch.softmax(model.classifier(nl_embs), dim=1)
+        logger.info(f"Probabilities: {probs}")
         
         start_idx = query_index * args.eval_batch_size
         end_idx = start_idx + len(nl_inputs)
@@ -350,6 +357,8 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
             
             # Calculate Hamming distance
             dists = (all_code_hashes != nl_hashes[i]).sum(dim=1)
+            logger.info(f"Hamming distance: {dists}")
+            logger.info(f"Hamming distance shape: {dists.shape}")
             
             # Recall strategy (Section 3.2.2 Eq 7)
             recall_counts = allocate_recalls(probs[i], args.total_recall, args.num_clusters)
