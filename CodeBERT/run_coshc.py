@@ -295,8 +295,11 @@ def evaluate_coshc(args, model, tokenizer):
     
     # Precompute code representations
     for batch in DataLoader(code_dataset, batch_size=args.eval_batch_size):
-        code_embs.append(model(code_inputs=batch[0].to(args.device)))
-        code_hashes.append(model.get_binary_hash(batch[0].to(args.device), is_code=True))
+        # Move data to GPU
+        code_inputs = batch[0].to(args.device, non_blocking=True)
+
+        code_embs.append(model(code_inputs=code_inputs))
+        code_hashes.append(model.get_binary_hash(code_inputs, is_code=True))
         code_clusters.append(model.classifier(code_embs[-1]).argmax(dim=1))
     
     code_embs = torch.cat(code_embs)
