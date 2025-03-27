@@ -97,10 +97,12 @@ class CoSHCModel(torch.nn.Module):
         self.classifier.to(device)
 
         print(self.code_hash[0].weight.device)
-        print(self.code_hash[1].weight.device)
         print(self.code_hash[2].weight.device)
-        print(self.code_hash[3].weight.device)
         print(self.code_hash[4].weight.device)
-        print(self.code_hash[5].weight.device)
+
+        print(self.nl_hash[0].weight.device)
+        print(self.nl_hash[2].weight.device)
+        print(self.nl_hash[4].weight.device)
         
+        print(self.classifier.weight.device)
         return self
