@@ -88,7 +88,16 @@ class CoSHCModel(torch.nn.Module):
 
     def to(self, device):
         self.base_model.to(device)
-        self.code_hash.to(device)
-        self.nl_hash.to(device)
-        self.classifier.to(device)
+
+        for layer in self.code_hash:
+            layer.to(device)
+        for layer in self.nl_hash:
+            layer.to(device)
+        for layer in self.classifier:
+            layer.to(device)
+
+        print(self.code_hash[0].weight.device)
+        print(self.code_hash[1].weight.device)
+        print(self.code_hash[-1].weight.device)
+        
         return self
