@@ -319,7 +319,7 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
         all_code_hashes.append(code_hashes)
         all_code_clusters.append(code_clusters)
 
-        if idx > 5:
+        if idx > 2:
             break
     
     all_code_embs = torch.cat(all_code_embs)
@@ -373,6 +373,8 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
             
             for cluster_id, count in enumerate(recall_counts):
                 mask = (all_code_clusters == cluster_id)
+                logger.info(f"Mask: {mask}")
+                logger.info(f"Mask shape: {mask.shape}")
                 cluster_dists = dists[mask]
                 # Get indices within cluster
                 cluster_indices = cluster_dists.topk(count, largest=False).indices
