@@ -302,7 +302,8 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
 
     # Precompute code representations
     logger.info("Precomputing code representations")
-    for batch in code_dataloader[:100]:
+    for idx, batch in enumerate(code_dataloader):
+        logger.info(f"Precomputing code representations batch {idx} of {len(code_dataloader)}")
         # Move data to GPU
         code_inputs = batch[0].to(args.device, non_blocking=True)
 
@@ -317,6 +318,9 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
         all_code_embs.append(code_embs)
         all_code_hashes.append(code_hashes)
         all_code_clusters.append(code_clusters)
+
+        if idx > 5:
+            break
     
     all_code_embs = torch.cat(all_code_embs)
     all_code_hashes = torch.cat(all_code_hashes)
