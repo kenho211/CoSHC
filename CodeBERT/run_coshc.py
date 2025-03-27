@@ -296,7 +296,7 @@ def evaluate_coshc(args, model, tokenizer):
     # Precompute code representations
     for batch in DataLoader(code_dataset, batch_size=args.eval_batch_size):
         # Move data to GPU
-        code_inputs = batch[0].to(dtype=torch.float32, device=args.device, non_blocking=True)
+        code_inputs = batch[0].to(args.device, non_blocking=True)
 
         code_emb = model(code_inputs=code_inputs)
         code_embs.append(code_emb)
