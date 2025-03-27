@@ -300,6 +300,7 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
     all_code_hashes = []
     all_code_clusters = []
 
+    model.eval()
     # Precompute code representations
     logger.info("Precomputing code representations")
     for idx, batch in enumerate(code_dataloader):
@@ -318,9 +319,6 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
         all_code_embs.append(code_embs)
         all_code_hashes.append(code_hashes)
         all_code_clusters.append(code_clusters)
-
-        if idx > 2:
-            break
     
     all_code_embs = torch.cat(all_code_embs)
     all_code_hashes = torch.cat(all_code_hashes)

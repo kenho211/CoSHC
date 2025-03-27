@@ -91,3 +91,13 @@ class CoSHCModel(torch.nn.Module):
         
         self.classifier.to(device)
         return self
+
+    def train(self):
+        self.code_hash.train()
+        self.nl_hash.train()
+        self.classifier.train()
+
+    def eval(self):
+        self.code_hash.eval()
+        self.nl_hash.eval()
+        self.classifier.eval()

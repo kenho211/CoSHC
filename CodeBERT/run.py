@@ -212,31 +212,39 @@ def evaluate(args, model, tokenizer,file_name,eval_when_training=False):
     model.eval()
     code_vecs=[] 
     nl_vecs=[]
-    for batch in query_dataloader:  
+
+    logger.info("Precomputing nl representations")
+    for batch in query_dataloader:
         nl_inputs = batch[1].to(args.device)
         with torch.no_grad():
             nl_vec = model(nl_inputs=nl_inputs) 
             nl_vecs.append(nl_vec.cpu().numpy()) 
+    logger.info("Precomputing nl representations completed")
 
+    logger.info("Precomputing code representations")
     for batch in code_dataloader:
         code_inputs = batch[0].to(args.device)    
         with torch.no_grad():
             code_vec= model(code_inputs=code_inputs)
             code_vecs.append(code_vec.cpu().numpy())  
+    logger.info("Precomputing code representations completed")
 
-    model.train()    
     code_vecs=np.concatenate(code_vecs,0)
     nl_vecs=np.concatenate(nl_vecs,0)
 
     # Vector Similarity Calculation
+    logger.info("Calculating vector similarity")
     start_time = time.time()
     scores=np.matmul(nl_vecs,code_vecs.T)
     similarity_time = time.time() - start_time
+    logger.info("Vector similarity calculation completed")
 
     # Array Sorting
+    logger.info("Sorting array")
     start_time = time.time()
     sort_ids=np.argsort(scores, axis=-1, kind='quicksort', order=None)[:,::-1]    
     sorting_time = time.time() - start_time
+    logger.info("Array sorting completed")
 
     # Total Retrieval Time
     total_retrieval_time = similarity_time + sorting_time
@@ -253,6 +261,8 @@ def evaluate(args, model, tokenizer,file_name,eval_when_training=False):
     success_at_1=[]
     success_at_5=[]
     success_at_10=[]
+    logger.info("Calculating success@1,5,10 and MRR")
+    start_time = time.time()
     for url, sort_id in zip(nl_urls,sort_ids):
         rank = 0
         found = False
