@@ -284,59 +284,71 @@ def train_coshc(args, model, tokenizer, code_embeddings):
     
     logger.info("Hashing module training completed")
 
-def evaluate_coshc(args, model, tokenizer):
+def evaluate_coshc(args, model, tokenizer, code_embeddings):
     """Two-stage evaluation: Hash recall + Re-rank"""
-    # Load codebase embeddings and hash codes
+    query_dataset = TextDataset(tokenizer, args, args.eval_data_file)
+    query_urls = [example.url for example in query_dataset.examples]
+    query_sampler = SequentialSampler(query_dataset)
+    query_dataloader = DataLoader(query_dataset, sampler=query_sampler, batch_size=args.eval_batch_size,num_workers=4)
+        
     code_dataset = TextDataset(tokenizer, args, args.codebase_file)
-    code_embs, code_hashes, code_clusters = [], [], []
-    
-    # Extract code URLs once
     code_urls = [example.url for example in code_dataset.examples]
+    code_sampler = SequentialSampler(code_dataset)
+    code_dataloader = DataLoader(code_dataset, sampler=code_sampler, batch_size=args.eval_batch_size,num_workers=4)
     
     # Precompute code representations
-    for batch in DataLoader(code_dataset, batch_size=args.eval_batch_size):
+    all_code_embs = []
+    all_code_hashes = []
+    all_code_clusters = []
+
+    for batch in code_dataloader:
         # Move data to GPU
         code_inputs = batch[0].to(args.device, non_blocking=True)
 
-        code_emb = model(code_inputs=code_inputs)
-        code_embs.append(code_emb)
+        # Get original embeddings
+        with torch.no_grad():
+            code_embs = model(code_inputs=code_inputs)
 
-        code_hash = model.get_binary_hash(code_inputs, is_code=True)
-        code_hashes.append(code_hash)
+        code_hashes = model.get_binary_hash(code_embs, is_code=True)
 
-        code_cluster = model.classifier(code_emb).argmax(dim=1)
-        code_clusters.append(code_cluster)
+        code_clusters = model.classifier(code_embs)
+
+        all_code_embs.append(code_embs)
+        all_code_hashes.append(code_hashes)
+        all_code_clusters.append(code_clusters)
     
-    code_embs = torch.cat(code_embs)
-    code_hashes = torch.cat(code_hashes)
-    code_clusters = torch.cat(code_clusters)
-    
+    all_code_embs = torch.cat(all_code_embs)
+    all_code_hashes = torch.cat(all_code_hashes)
+    all_code_clusters = torch.cat(all_code_clusters)
+
     # Process queries
-    query_dataset = TextDataset(tokenizer, args, args.eval_data_file)
-    query_urls = [example.url for example in query_dataset.examples]
-    
     results = []
     similarity_time = 0
     sorting_time = 0
     query_index = 0
     overall_start_time = time.time()
 
-    for query_batch in DataLoader(query_dataset, batch_size=args.eval_batch_size):
-        nl_embs = model(nl_inputs=query_batch[1].to(args.device))
-        nl_hashes = model.get_binary_hash(query_batch[1].to(args.device), is_code=False)
+    for query_batch in query_dataloader:
+        # Move data to GPU
+        nl_inputs = query_batch[1].to(args.device, non_blocking=True)
+        # Get original embeddings
+        with torch.no_grad():
+            nl_embs = model(nl_inputs=nl_inputs)
+        
+        nl_hashes = model.get_binary_hash(nl_embs, is_code=False)
         
         # Stage 1: Category Prediction (Section 3.2.2)
         probs = torch.softmax(model.classifier(nl_embs), dim=1)
         
-        query_urls = [example.url for example in query_batch]
+        query_batch_urls = [example.url for example in query_batch]
         
         # Stage 2: Hash-based Recall (Section 3.2.1)
         for i in range(len(nl_embs)):
             # Get current query URL
-            query_url = query_urls[query_index]
+            query_url = query_batch_urls[i]
             
             # Calculate Hamming distance
-            dists = (code_hashes != nl_hashes[i]).sum(dim=1)
+            dists = (all_code_hashes != nl_hashes[i]).sum(dim=1)
             
             # Recall strategy (Section 3.2.2 Eq 7)
             recall_counts = allocate_recalls(probs[i], args.total_recall)
@@ -346,14 +358,14 @@ def evaluate_coshc(args, model, tokenizer):
             candidate_indices = []  # Track indices for URL mapping
             
             for cluster_id, count in enumerate(recall_counts):
-                mask = (code_clusters == cluster_id)
+                mask = (all_code_clusters == cluster_id)
                 cluster_dists = dists[mask]
                 # Get indices within cluster
                 cluster_indices = cluster_dists.topk(count, largest=False).indices
                 # Map to original indices
                 original_indices = torch.where(mask)[0][cluster_indices]
                 candidate_indices.extend(original_indices.tolist())
-                candidates.append(code_embs[mask][cluster_indices])
+                candidates.append(all_code_embs[mask][cluster_indices])
             
             candidates = torch.cat(candidates)
             
@@ -367,8 +379,6 @@ def evaluate_coshc(args, model, tokenizer):
             result = process_scores(scores, batch_candidate_urls, query_url, args.total_recall)
             sorting_time += result['sorting_time']
             results.append(result)
-            
-            query_index += 1
     
     end_time = time.time()
     retrieval_time = end_time - overall_start_time
@@ -639,9 +649,10 @@ def main(args=None):
         logger.info("Skipping training")
     
     if args.do_eval:
+        code_embeddings = load_code_embeddings(args.embedding_dir, args.device)
         checkpoint = torch.load(args.coshc_checkpoint_path, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
-        evaluate_coshc(args, model, tokenizer)
+        evaluate_coshc(args, model, tokenizer, code_embeddings)
     else:
         logger.info("Skipping evaluation")
 
