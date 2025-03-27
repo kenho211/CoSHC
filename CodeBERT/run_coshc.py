@@ -668,7 +668,7 @@ def main(args=None):
         code_embeddings = load_code_embeddings(args.embedding_dir, args.device)
         checkpoint = torch.load(args.coshc_checkpoint_path, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
-        evaluate_coshc(args, model, tokenizer, code_embeddings)
+        return evaluate_coshc(args, model, tokenizer, code_embeddings)
     else:
         logger.info("Skipping evaluation")
 
