@@ -348,7 +348,7 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
         
         # Stage 1: Category Prediction (Section 3.2.2)
         probs = torch.softmax(model.classifier(nl_embs), dim=1)
-        logger.info(f"Probabilities: {probs}")
+        # logger.info(f"Probabilities: {probs}")
         
         start_idx = query_index * args.eval_batch_size
         end_idx = start_idx + len(nl_inputs)
@@ -361,8 +361,8 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
             
             # Calculate Hamming distance
             dists = (all_code_hashes != nl_hashes[i]).sum(dim=1)
-            logger.info(f"Hamming distance: {dists}")
-            logger.info(f"Hamming distance shape: {dists.shape}")
+            # logger.info(f"Hamming distance: {dists}")
+            # logger.info(f"Hamming distance shape: {dists.shape}")
             
             # Recall strategy (Section 3.2.2 Eq 7)
             recall_counts = allocate_recalls(probs[i], args.total_recall, args.num_clusters)
@@ -373,8 +373,8 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
             
             for cluster_id, count in enumerate(recall_counts):
                 mask = (torch.argmax(all_code_clusters, dim=1) == cluster_id)
-                logger.info(f"Mask: {mask}")
-                logger.info(f"Mask shape: {mask.shape}")
+                # logger.info(f"Mask: {mask}")
+                # logger.info(f"Mask shape: {mask.shape}")
                 cluster_dists = dists[mask]
                 # Get indices within cluster
                 cluster_indices = cluster_dists.topk(min(count, len(cluster_dists)), largest=False).indices
