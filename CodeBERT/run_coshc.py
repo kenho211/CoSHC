@@ -352,7 +352,7 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
             dists = (all_code_hashes != nl_hashes[i]).sum(dim=1)
             
             # Recall strategy (Section 3.2.2 Eq 7)
-            recall_counts = allocate_recalls(probs[i], args.total_recall)
+            recall_counts = allocate_recalls(probs[i], args.total_recall, args.num_clusters)
             
             # Re-rank with original embeddings (Section 3.2.1)
             candidates = []
