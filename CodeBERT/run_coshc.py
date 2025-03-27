@@ -235,6 +235,10 @@ def train_coshc(args, model, tokenizer, code_embeddings):
             # Compute target similarity matrix before hashing
             S_target = compute_similarity_matrix(code_embs, nl_embs, args.beta, args.eta, args.train_batch_size)
             
+            # Convert embeddings to long and move to CUDA
+            code_embs = code_embs.long().to(args.device)
+            nl_embs = nl_embs.long().to(args.device)
+            
             # Get hash codes
             B_code = model.get_binary_hash(code_embs, is_code=True, apply_tanh=True)
             B_nl = model.get_binary_hash(nl_embs, is_code=False, apply_tanh=True)
