@@ -235,10 +235,6 @@ def train_coshc(args, model, tokenizer, code_embeddings):
             # Compute target similarity matrix before hashing
             S_target = compute_similarity_matrix(code_embs, nl_embs, args.beta, args.eta, args.train_batch_size)
             
-            # Convert embeddings to long and move to CUDA
-            code_embs = code_embs.to(dtype=torch.float32, device=args.device)
-            nl_embs = nl_embs.to(dtype=torch.float32, device=args.device)
-
             # Get hash codes
             B_code = model.get_binary_hash(code_embs, is_code=True, apply_tanh=True)
             B_nl = model.get_binary_hash(nl_embs, is_code=False, apply_tanh=True)
@@ -300,11 +296,16 @@ def evaluate_coshc(args, model, tokenizer):
     # Precompute code representations
     for batch in DataLoader(code_dataset, batch_size=args.eval_batch_size):
         # Move data to GPU
-        code_inputs = batch[0].to(args.device, non_blocking=True)
+        code_inputs = batch[0].to(dtype=torch.float32, device=args.device, non_blocking=True)
 
-        code_embs.append(model(code_inputs=code_inputs))
-        code_hashes.append(model.get_binary_hash(code_inputs, is_code=True))
-        code_clusters.append(model.classifier(code_embs[-1]).argmax(dim=1))
+        code_emb = model(code_inputs=code_inputs)
+        code_embs.append(code_emb)
+
+        code_hash = model.get_binary_hash(code_inputs, is_code=True)
+        code_hashes.append(code_hash)
+
+        code_cluster = model.classifier(code_emb).argmax(dim=1)
+        code_clusters.append(code_cluster)
     
     code_embs = torch.cat(code_embs)
     code_hashes = torch.cat(code_hashes)
