@@ -67,6 +67,7 @@ class CoSHCModel(torch.nn.Module):
 
     def get_binary_hash(self, inputs, is_code=True, apply_tanh=False):
         """Get binary hash using sign function (equation 5); For inference"""
+        inputs.to(self.code_hash[0].weight.device)
         if is_code:
             h = self.code_hash[:-1](inputs)
         else:
