@@ -69,7 +69,6 @@ class CoSHCModel(torch.nn.Module):
         """Get binary hash using sign function (equation 5); For inference"""
         inputs = inputs.to(dtype=torch.float32, device=self.code_hash[0].weight.device)
 
-        print(inputs.shape)
         if is_code:
             h = self.code_hash[:-1](inputs)
         else:
