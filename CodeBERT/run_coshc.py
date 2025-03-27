@@ -625,6 +625,16 @@ def main(args=None):
     model = CoSHCModel(base_model)
     model = model.to(args.device)
     logger.info("CoSHC model loaded")
+    logger.info(model.code_hash[0].weight.device)
+    logger.info(model.code_hash[2].weight.device)
+    logger.info(model.code_hash[4].weight.device)
+
+    logger.info(model.nl_hash[0].weight.device)
+    logger.info(model.nl_hash[2].weight.device)
+    logger.info(model.nl_hash[4].weight.device)
+    
+    logger.info(model.classifier.weight.device)
+
 
     if args.do_train:
         # Load precomputed code embeddings
