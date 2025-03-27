@@ -372,12 +372,12 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
             candidate_indices = []  # Track indices for URL mapping
             
             for cluster_id, count in enumerate(recall_counts):
-                mask = (all_code_clusters == cluster_id)
+                mask = (torch.argmax(all_code_clusters, dim=1) == cluster_id)
                 logger.info(f"Mask: {mask}")
                 logger.info(f"Mask shape: {mask.shape}")
                 cluster_dists = dists[mask]
                 # Get indices within cluster
-                cluster_indices = cluster_dists.topk(count, largest=False).indices
+                cluster_indices = cluster_dists.topk(min(count, len(cluster_dists)), largest=False).indices
                 # Map to original indices
                 original_indices = torch.where(mask)[0][cluster_indices]
                 candidate_indices.extend(original_indices.tolist())
