@@ -387,7 +387,6 @@ def main(args=None):
         train(args, model, tokenizer)
 
     # Evaluation
-    results = {}
     if args.do_eval:
         checkpoint_prefix = 'checkpoint-best-mrr/pytorch_model.bin'
         output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))  
@@ -410,7 +409,7 @@ def main(args=None):
         for key in sorted(result.keys()):
             logger.info("  %s = %s", key, str(round(result[key],4)))
 
-    return results
+    return result
 
 
 if __name__ == "__main__":
