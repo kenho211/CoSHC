@@ -302,7 +302,7 @@ def evaluate(args, model, tokenizer,file_name,eval_when_training=False):
         "Success@5": np.mean(success_at_5),
         "Success@10": np.mean(success_at_10),
         "MRR": np.mean(ranks),
-        "RetrievalTime": total_retrieval_time,
+        "RetrievalTime": retrieval_time,
         "SimilarityTime": similarity_time,
         "SortingTime": sorting_time,
     }
@@ -389,7 +389,6 @@ def main(args=None):
         train(args, model, tokenizer)
 
     # Evaluation
-    results = {}
     if args.do_eval:
         checkpoint_prefix = 'checkpoint-best-mrr/pytorch_model.bin'
         output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))  
@@ -412,7 +411,7 @@ def main(args=None):
         for key in sorted(result.keys()):
             logger.info("  %s = %s", key, str(round(result[key],4)))
 
-    return results
+    return result
 
 
 if __name__ == "__main__":
