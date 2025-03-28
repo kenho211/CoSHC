@@ -262,7 +262,6 @@ def evaluate(args, model, tokenizer,file_name,eval_when_training=False):
     success_at_5=[]
     success_at_10=[]
     logger.info("Calculating success@1,5,10 and MRR")
-    start_time = time.time()
     for url, sort_id in zip(nl_urls,sort_ids):
         rank = 0
         found = False
@@ -295,14 +294,13 @@ def evaluate(args, model, tokenizer,file_name,eval_when_training=False):
         else:
             ranks.append(0)
 
-    end_time = time.time()
-    retrieval_time = end_time - start_time
+    total_time = similarity_time + sorting_time
     result = {
         "Success@1": np.mean(success_at_1),
         "Success@5": np.mean(success_at_5),
         "Success@10": np.mean(success_at_10),
         "MRR": np.mean(ranks),
-        "RetrievalTime": total_retrieval_time,
+        "TotalTime": total_time,
         "SimilarityTime": similarity_time,
         "SortingTime": sorting_time,
     }

@@ -66,17 +66,14 @@ def evaluate_baseline(dataset_type):
     
     # Parse the arguments
     args = parser.parse_args(args_list)
-
-    start_time = time.time()
     results = run_main(args)
-    total_time = time.time() - start_time
     
     return {
         "Success@1": results["Success@1"],
         "Success@5": results["Success@5"],
         "Success@10": results["Success@10"],
         "MRR": results["MRR"],
-        "TotalTime": total_time,
+        "TotalTime": results["TotalTime"],
         "SimilarityTime": results["SimilarityTime"],
         "SortingTime": results["SortingTime"]
     }
@@ -198,17 +195,14 @@ def evaluate_coshc(dataset_type):
 
     # Parse the arguments
     args = parser.parse_args(args_list)
-
-    start_time = time.time()
     results = run_coshc_main(args)
-    total_time = time.time() - start_time
     
     return {
         "Success@1": results["Success@1"],
         "Success@5": results["Success@5"],
         "Success@10": results["Success@10"],
         "MRR": results["MRR"],
-        "TotalTime": total_time,
+        "TotalTime": results["TotalTime"],
         "SimilarityTime": results["SimilarityTime"],
         "SortingTime": results["SortingTime"]
     }
