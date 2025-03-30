@@ -56,8 +56,8 @@ def hashing_loss(B_code, B_nl, S_target, mu=1.5, lambda1=0.1, lambda2=0.1):
 
 # Custom Collate Function
 def custom_collate_fn(batch):
-    code_batch = [item[0] for item in batch]
-    query_batch = [item[1] for item in batch]
+    code_batch = [item[0] for item in batch]  # List of code token lists
+    query_batch = [item[1] for item in batch]  # List of query token lists
     return code_batch, query_batch
 
 from dataclasses import dataclass
@@ -70,35 +70,26 @@ class InputFeatures:
 
 # Dataset Class
 class TextDataset(Dataset):
-    def __init__(self, tokenizer, args, file_path):
+    def __init__(self, args, file_path):
         self.examples = []
         with open(file_path, "r") as f:
             for line in f:
                 entry = json.loads(line)
                 self.examples.append({
-                    "code": entry["code_tokens"],
-                    "query": entry["docstring_tokens"],
+                    "code": entry["code_tokens"],  # Already tokenized list
+                    "query": entry["docstring_tokens"],  # Already tokenized list
                     "url": entry.get("url", f"ex_{len(self.examples)}")
                 })
-        self.tokenizer = tokenizer
         self.args = args
     
     def __len__(self):
         return len(self.examples)
     
     def __getitem__(self, idx):
-        # Get tokenized examples
+        # Return pre-tokenized data directly
         code_tokens = self.examples[idx]["code"]
         query_tokens = self.examples[idx]["query"]
-        
-        # Convert to IDs using tokenizer
-        code_ids = self.tokenizer.convert_tokens_to_ids(code_tokens)
-        query_ids = self.tokenizer.convert_tokens_to_ids(query_tokens)
-        
-        return (
-            torch.tensor(code_ids, dtype=torch.long),
-            torch.tensor(query_ids, dtype=torch.long)
-        )
+        return (code_tokens, query_tokens)
 
 def collate_fn(batch):
     """Pad sequences to max length in batch"""
@@ -128,21 +119,6 @@ def convert_examples_to_features(js,tokenizer,args):
     
     return InputFeatures(code_tokens,code_ids,nl_tokens,nl_ids,js['url'])
 
-# class InputFeatures(object):
-#     """A single training/test features for a example."""
-#     def __init__(self,
-#                  code_tokens,
-#                  code_ids,
-#                  nl_tokens,
-#                  nl_ids,
-#                  url,
-
-#     ):
-#         self.code_tokens = code_tokens
-#         self.code_ids = code_ids
-#         self.nl_tokens = nl_tokens
-#         self.nl_ids = nl_ids
-#         self.url=url
 
 class DummyTokenizer:
     def __init__(self):
@@ -191,55 +167,17 @@ class DummyTokenizer:
         return " ".join([f"token_{id}" for id in ids])
 
 
-# Model Definitions
-# class BaseModel(torch.nn.Module):
-#     def __init__(self, unif_embedder):
-#         super(BaseModel, self).__init__()
-#         self.embedder = unif_embedder
-    
-#     def forward(self, code_inputs=None, nl_inputs=None):
-#         device = 'mps' if torch.backends.mps.is_available() else 'cpu' #'cuda' if torch.cuda.is_available() else 'cpu'
-#         if code_inputs is not None:
-#             if not code_inputs:
-#                 logger.error("code_inputs is empty")
-#                 return None
-#             snippets = [{"code": code, "language": "java"} for code in code_inputs]
-#             embeddings = self.embedder.embed_snippets(snippets)
-#             if embeddings is None or embeddings.size == 0:
-#                 logger.error("Failed to generate code embeddings")
-#                 return None
-#             return torch.tensor(embeddings, dtype=torch.float32).to(device)
-#         elif nl_inputs is not None:
-#             if not nl_inputs:
-#                 logger.error("nl_inputs is empty")
-#                 return None
-#             embeddings = self.embedder.embed_queries(nl_inputs)
-#             if embeddings is None or embeddings.size == 0:
-#                 logger.error("Failed to generate query embeddings")
-#                 return None
-#             return torch.tensor(embeddings, dtype=torch.float32).to(device)
-#         logger.error("No valid inputs provided")
-#         return None
-
 class BaseModel(torch.nn.Module):
-    def __init__(self, embedder, tokenizer=None, device=None):
+    def __init__(self, embedder, device=None):
         super().__init__()
         self.embedder = embedder
-        self.tokenizer = tokenizer if tokenizer is not None else DummyTokenizer()
         self.device = device if device is not None else torch.device("cpu")
     
     def forward(self, code_inputs=None, nl_inputs=None):
         if code_inputs is not None:
-            if isinstance(code_inputs, torch.Tensor):
-                if code_inputs.dim() == 1:
-                    code_inputs = code_inputs.unsqueeze(0)
-                if code_inputs.nelement() == 0:
-                    return None
-                code_inputs = [self.tokenizer.decode(ids.tolist()).split() for ids in code_inputs]
-            
             if not code_inputs:
                 return None
-                
+            # Assume code_inputs is a list of tokenized lists
             snippets = [{"code": code, "language": "java"} for code in code_inputs]
             embeddings = self.embedder.embed_snippets(snippets)
             if embeddings is None:
@@ -247,16 +185,9 @@ class BaseModel(torch.nn.Module):
             return torch.tensor(embeddings, dtype=torch.float32).to(self.device)
             
         elif nl_inputs is not None:
-            if isinstance(nl_inputs, torch.Tensor):
-                if nl_inputs.dim() == 1:
-                    nl_inputs = nl_inputs.unsqueeze(0)
-                if nl_inputs.nelement() == 0:
-                    return None
-                nl_inputs = [self.tokenizer.decode(ids.tolist()).split() for ids in nl_inputs]
-            
             if not nl_inputs:
                 return None
-                
+            # Assume nl_inputs is a list of tokenized lists
             embeddings = self.embedder.embed_queries(nl_inputs)
             if embeddings is None:
                 return None
@@ -270,22 +201,43 @@ class CoSHCModel(torch.nn.Module):
         self.base_model = base_model
         self.device = device if device is not None else torch.device("cpu")
         embed_dim = base_model.embedder.ft_model.get_dimension()
-        self.code_hash = torch.nn.Linear(embed_dim, hash_dim)
-        self.nl_hash = torch.nn.Linear(embed_dim, hash_dim)
+         # Hashing Module (Section 3.1.2)
+        self.code_hash = torch.nn.Sequential(
+            torch.nn.Linear(embed_dim, 512),
+            torch.nn.Tanh(),
+            torch.nn.Linear(512, 512),
+            torch.nn.Tanh(),
+            torch.nn.Linear(512, hash_dim),
+            torch.nn.Tanh()
+        )
+        self.nl_hash = torch.nn.Sequential(
+            torch.nn.Linear(embed_dim, 512),
+            torch.nn.Tanh(),
+            torch.nn.Linear(512, 512),
+            torch.nn.Tanh(),
+            torch.nn.Linear(512, hash_dim),
+            torch.nn.Tanh()
+        )
+        
+        # self.code_hash = torch.nn.Linear(embed_dim, hash_dim)
+        # self.nl_hash = torch.nn.Linear(embed_dim, hash_dim)
         self.alpha = 1.0
+        # self.classifier = torch.nn.Linear(embed_dim, num_clusters)
         self.classifier = torch.nn.Linear(embed_dim, num_clusters)
     
-    def get_binary_hash(self, embeddings, is_code=True):
-        if embeddings is None:
-            return None
-            
-        if isinstance(embeddings, tuple):
-            # Take the first element if it's a tuple
-            embeddings = embeddings[0]
-            
-        hash_layer = self.code_hash if is_code else self.nl_hash
-        logits = hash_layer(embeddings)
-        return torch.tanh(self.alpha * logits)
+    def get_binary_hash(self, embeddings, is_code=True, apply_tanh=False):
+        inputs = embeddings.to(dtype=torch.float32, device=self.device)
+
+        if is_code:
+            h = self.code_hash[:-1](inputs)
+        else:
+            h = self.nl_hash[:-1](inputs)
+        
+        # Apply equation 6: tanh(alpha * H)
+        if apply_tanh:
+            return torch.tanh(self.alpha * h)
+        else:
+            return torch.sign(h)  # Equation 5
     
     def forward(self, code_inputs=None, nl_inputs=None):
         return self.base_model(code_inputs=code_inputs, nl_inputs=nl_inputs)
@@ -351,9 +303,9 @@ def train_unif_embedder(train_file, output_dir, lang):
     embedder.save(output_dir)
     return embedder
 
-# CoSHC Training
+
 def train_coshc(args, model, train_file):
-    dataset = TextDataset(train_file)
+    dataset = TextDataset(args, train_file)
     dataloader = DataLoader(dataset, batch_size=args.train_batch_size, num_workers=4, collate_fn=custom_collate_fn)
     
     base_query_embs, base_code_embs = [], []
@@ -362,7 +314,6 @@ def train_coshc(args, model, train_file):
     embedding_dir = Path("embeddings/train") / args.lang
     embedding_dir.mkdir(parents=True, exist_ok=True)
     
-    # Check if embeddings already exist
     base_code_path = embedding_dir / f"base_code_embeddings_{args.lang}.pt"
     base_query_path = embedding_dir / f"base_query_embeddings_{args.lang}.pt"
     hash_code_path = embedding_dir / f"hash_code_embeddings_{args.lang}.pt"
@@ -376,7 +327,6 @@ def train_coshc(args, model, train_file):
         hash_code_embs = torch.load(hash_code_path, map_location=args.device)
         hash_query_embs = torch.load(hash_query_path, map_location=args.device)
     else:
-        # Generate all embeddings during training
         for batch in dataloader:
             code_embs = model(code_inputs=batch[0])
             nl_embs = model(nl_inputs=batch[1])
@@ -394,7 +344,6 @@ def train_coshc(args, model, train_file):
             logger.error("No valid embeddings generated during training")
             return
     
-        # Concatenate and save embeddings
         base_code_embs = torch.cat(base_code_embs).detach()
         base_query_embs = torch.cat(base_query_embs).detach()
         hash_code_embs = torch.cat(hash_code_embs).detach()
@@ -417,9 +366,11 @@ def train_coshc(args, model, train_file):
     model.train()
     classifier_optimizer = torch.optim.AdamW(model.classifier.parameters(), lr=args.learning_rate)
     criterion = CrossEntropyLoss()
+
     
     for epoch in range(args.class_epochs):
         total_train_loss = 0
+        last_train_loss = np.inf
         for i, batch in enumerate(dataloader):
             code_embs = model(code_inputs=batch[0])
             if code_embs is None:
@@ -432,284 +383,175 @@ def train_coshc(args, model, train_file):
             classifier_optimizer.zero_grad()
             total_train_loss += loss.item()
         logger.info(f"Classifier Epoch {epoch}, Train Loss: {total_train_loss / len(dataloader):.4f}")
+        if total_train_loss >= last_train_loss:
+            break
+        else:
+            last_train_loss = total_train_loss
     
-    # Hashing Training (No Early Stopping)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
+
+    # Add learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.hash_epochs)
     
     for epoch in range(args.hash_epochs):
         total_train_loss = 0
+        last_train_loss = np.inf
         for batch in dataloader:
             code_embs = model(code_inputs=batch[0])
             nl_embs = model(nl_inputs=batch[1])
             if code_embs is None or nl_embs is None:
                 continue
             S_target = compute_similarity_matrix(code_embs, nl_embs, args.beta, args.eta, args.train_batch_size)
-            B_code = model.get_binary_hash(code_embs, is_code=True)
-            B_nl = model.get_binary_hash(nl_embs, is_code=False)
+            B_code = model.get_binary_hash(code_embs, is_code=True, apply_tanh=True) #apply_tanh=True
+            B_nl = model.get_binary_hash(nl_embs, is_code=False, apply_tanh=True)
             loss = hashing_loss(B_code, B_nl, S_target, args.mu, args.lambda1, args.lambda2)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
             optimizer.step()
             optimizer.zero_grad()
             total_train_loss += loss.item()
+
+        scheduler.step()
         logger.info(f"Hashing Epoch {epoch}, Train Loss: {total_train_loss / len(dataloader):.4f}")
         model.alpha += 1.0
+        if total_train_loss >= last_train_loss:
+            break
+        else:
+            last_train_loss = total_train_loss
 
-# # Evaluation with Retrieval Time Logging
-# def evaluate_coshc(args, model, valid_file):
-#     dataset = TextDataset(valid_file)
-#     dataloader = DataLoader(dataset, batch_size=args.eval_batch_size, collate_fn=custom_collate_fn)
-    
-#     base_query_embs, base_code_embs = [], []
-#     hash_query_embs, hash_code_embs = [], []
-#     device = args.device
-    
-#     for batch in dataloader:
-#         q_embs = model(nl_inputs=batch[1])
-#         c_embs = model(code_inputs=batch[0])
-#         if q_embs is not None and c_embs is not None:
-#             base_query_embs.append(q_embs.cpu())
-#             base_code_embs.append(c_embs.cpu())
-#             hash_q_embs = model.get_binary_hash(q_embs, is_code=False).cpu()
-#             hash_c_embs = model.get_binary_hash(c_embs, is_code=True).cpu()
-#             hash_query_embs.append(hash_q_embs)
-#             hash_code_embs.append(hash_c_embs)
-    
-#     if not base_query_embs or not base_code_embs:
-#         logger.error("No valid embeddings for evaluation")
-#         return
-    
-#     base_query_embs = torch.cat(base_query_embs).detach().numpy()
-#     base_code_embs = torch.cat(base_code_embs).detach().numpy()
-#     hash_query_embs = torch.cat(hash_query_embs).detach().numpy()
-#     hash_code_embs = torch.cat(hash_code_embs).detach().numpy()
-    
-#     embedding_dir = Path("embeddings/valid") / args.lang
-#     embedding_dir.mkdir(parents=True, exist_ok=True)
-#     np.save(embedding_dir / f"base_query_embeddings_{args.lang}.npy", base_query_embs)
-#     np.save(embedding_dir / f"base_code_embeddings_{args.lang}.npy", base_code_embs)
-#     np.save(embedding_dir / f"hash_query_embeddings_{args.lang}.npy", hash_query_embs)
-#     np.save(embedding_dir / f"hash_code_embeddings_{args.lang}.npy", hash_code_embs)
-#     logger.info(f"Saved base query embeddings to {embedding_dir / f'base_query_embeddings_{args.lang}.npy'}")
-#     logger.info(f"Saved base code embeddings to {embedding_dir / f'base_code_embeddings_{args.lang}.npy'}")
-#     logger.info(f"Saved hashed query embeddings to {embedding_dir / f'hash_query_embeddings_{args.lang}.npy'}")
-#     logger.info(f"Saved hashed code embeddings to {embedding_dir / f'hash_code_embeddings_{args.lang}.npy'}")
-    
-#     base_query_embs_norm = base_query_embs / np.linalg.norm(base_query_embs, axis=1, keepdims=True)
-#     base_code_embs_norm = base_code_embs / np.linalg.norm(base_code_embs, axis=1, keepdims=True)
-#     hash_query_embs_norm = hash_query_embs / np.linalg.norm(hash_query_embs, axis=1, keepdims=True)
-#     hash_code_embs_norm = hash_code_embs / np.linalg.norm(hash_code_embs, axis=1, keepdims=True)
-    
-#     base_start_time = time.time()
-#     base_similarity = base_query_embs_norm @ base_code_embs_norm.T
-#     base_ranks = np.argsort(-base_similarity, axis=1)
-#     base_retrieval_time = time.time() - base_start_time
-    
-#     hash_start_time = time.time()
-#     hash_similarity = hash_query_embs_norm @ hash_code_embs_norm.T
-#     hash_ranks = np.argsort(-hash_similarity, axis=1)
-#     hash_retrieval_time = time.time() - hash_start_time
-    
-#     logger.info(f"Base Model Retrieval Time ({args.lang}): {base_retrieval_time:.4f} seconds")
-#     logger.info(f"Hashed Model Retrieval Time ({args.lang}): {hash_retrieval_time:.4f} seconds")
-#     logger.info(f"Time Difference (Base - Hash) ({args.lang}): {base_retrieval_time - hash_retrieval_time:.4f} seconds")
-    
-#     def evaluate_topk(similarity_matrix, top_k_values=[1, 5, 10]):
-#         results = {f"Success@{k}": 0 for k in top_k_values}
-#         reciprocal_ranks = []
-#         for query_idx in range(similarity_matrix.shape[0]):
-#             scores = similarity_matrix[query_idx]
-#             sorted_indices = np.argsort(-scores)
-#             rank = np.where(sorted_indices == query_idx)[0][0] + 1
-#             for k in top_k_values:
-#                 if rank <= k:
-#                     results[f"Success@{k}"] += 1
-#             reciprocal_ranks.append(1 / rank)
-#         num_queries = similarity_matrix.shape[0]
-#         for k in top_k_values:
-#             results[f"Success@{k}"] /= num_queries
-#         results["MRR"] = np.mean(reciprocal_ranks)
-#         return results
-    
-#     metrics = evaluate_topk(base_similarity)
-#     logger.info(f"Evaluation Results (Base Model - {args.lang}):")
-#     for metric, value in metrics.items():
-#         logger.info(f"{metric}: {value:.4f}")
-    
-#     metrics = evaluate_topk(hash_similarity)
-#     logger.info(f"Evaluation Results (Hash Model - {args.lang}):")
-#     for metric, value in metrics.items():
-#         logger.info(f"{metric}: {value:.4f}")
-def collate_fn(batch):
-    code_batch, query_batch = zip(*batch)
-    
-    # Pad sequences to max length in batch
-    code_padded = pad_sequence(
-        code_batch, 
-        batch_first=True, 
-        padding_value=0  # Using 0 as pad_id
-    )
-    query_padded = pad_sequence(
-        query_batch,
-        batch_first=True,
-        padding_value=0
-    )
-    
-    return code_padded, query_padded
 
-def evaluate_coshc(args, model, valid_file, tokenizer, embedder):
-    """Two-stage evaluation: Hash recall + Re-rank, adapted for tokenized string data"""
-    query_dataset = TextDataset(tokenizer, args, args.eval_data_file)
-    query_urls = [example['url'] for example in query_dataset.examples]
-    query_sampler = SequentialSampler(query_dataset)
-    query_dataloader = DataLoader(query_dataset, sampler=query_sampler, batch_size=args.eval_batch_size, collate_fn=collate_fn, shuffle=False)
+def evaluate_coshc(args, model, valid_file):
+    dataset = TextDataset(args, valid_file)
+    dataloader = DataLoader(dataset, batch_size=args.eval_batch_size, collate_fn=custom_collate_fn)
     
-    code_dataset = TextDataset(tokenizer, args, args.eval_data_file)
-    code_urls = [example['url']for example in code_dataset.examples]
-    code_sampler = SequentialSampler(code_dataset)
-    code_dataloader = DataLoader(code_dataset, sampler=code_sampler, batch_size=args.eval_batch_size, collate_fn=collate_fn, shuffle=False)
-
-    
+    # Precompute code representations
     all_code_embs = []
     all_code_hashes = []
-    all_code_clusters = []
-
+    all_urls = [ex["url"] for ex in dataset.examples]
+    
     model.eval()
     logger.info("Precomputing code representations")
-    for idx, batch in enumerate(code_dataloader):
-        logger.info(f"Precomputing code representations batch {idx} of {len(code_dataloader)}")
-        logger.debug(f"Batch[0] type: {type(batch[0])}, Batch[0]: {batch[0][:2] if isinstance(batch[0], (list, torch.Tensor)) else batch[0]}")
-        
-        print(batch[0])
-        code_inputs = batch[0].to(args.device, non_blocking=True)
-        
-        with torch.no_grad():
-            code_embs = model(code_inputs=code_inputs)
-        code_hashes = model.get_binary_hash(code_embs, is_code=True)
-        code_clusters = model.classifier(code_embs)
-        all_code_embs.append(code_embs)
-        all_code_hashes.append(code_hashes)
-        all_code_clusters.append(code_clusters)
+    for batch in dataloader:
+        c_embs = model(code_inputs=batch[0])
+        if c_embs is not None:
+            all_code_embs.append(c_embs.cpu())
+            hash_c_embs = model.get_binary_hash(c_embs, is_code=True).cpu()
+            all_code_hashes.append(hash_c_embs)
     
-    all_code_embs = torch.cat(all_code_embs)
-    all_code_hashes = torch.cat(all_code_hashes)
-    all_code_clusters = torch.cat(all_code_clusters)
-    logger.info("Precomputing code representations completed")
-
+    if not all_code_embs:
+        logger.error("No valid code embeddings for evaluation")
+        return
+    
+    all_code_embs = torch.cat(all_code_embs).to(args.device)
+    all_code_hashes = torch.cat(all_code_hashes).to(args.device)
+    
+    # Save embeddings
+    embedding_dir = Path("embeddings/valid") / args.lang
+    embedding_dir.mkdir(parents=True, exist_ok=True)
+    base_code_embs = all_code_embs.detach().cpu().numpy()
+    hash_code_embs = all_code_hashes.detach().cpu().numpy()
+    np.save(embedding_dir / f"base_code_embeddings_{args.lang}.npy", base_code_embs)
+    np.save(embedding_dir / f"hash_code_embeddings_{args.lang}.npy", hash_code_embs)
+    logger.info(f"Saved base code embeddings to {embedding_dir / f'base_code_embeddings_{args.lang}.npy'}")
+    logger.info(f"Saved hashed code embeddings to {embedding_dir / f'hash_code_embeddings_{args.lang}.npy'}")
+    
+    # Process queries with hash-based evaluation
     hash_total_time = 0
     hash_similarity_time = 0
     hash_sorting_time = 0
-    brute_total_time = 0
-    brute_similarity_time = 0
-    brute_sorting_time = 0
-
+    base_total_time = 0
+    base_similarity_time = 0
+    base_sorting_time = 0
     hash_results = []
-    brute_results = []
-
-    # results = []
-    # similarity_time = 0
-    # sorting_time = 0
-
-    logger.info("Processing queries")
-    for query_index, query_batch in enumerate(query_dataloader):
-        logger.info(f"Processing query batch {query_index} of {len(query_dataloader)}")
-        logger.debug(f"Batch[1] type: {type(query_batch[1])}, Batch[1]: {query_batch[1][:2] if isinstance(query_batch[1], (list, torch.Tensor)) else query_batch[1]}")
+    base_results = []
+    
+    logger.info("Processing queries with hash-based evaluation")
+    for batch_idx, batch in enumerate(dataloader):
+        q_embs = model(nl_inputs=batch[1])
+        if q_embs is None:
+            continue
+        q_hashes = model.get_binary_hash(q_embs, is_code=False)
         
-        if isinstance(query_batch[1], torch.Tensor):
-            nl_inputs = query_batch[1].to(args.device, non_blocking=True)
-        elif isinstance(query_batch[1], list):
-            if query_batch[1] and isinstance(query_batch[1][0], str):
-                nl_sequences = [embedder.encoder.encode(seq) for seq in query_batch[1]]
-            elif query_batch[1] and isinstance(query_batch[1][0], list):
-                nl_sequences = [embedder.encoder.encode(' '.join(seq)) for seq in query_batch[1]]
-            else:
-                raise ValueError(f"Unexpected batch[1] content: {query_batch[1][:2]}")
-            nl_inputs = pad_sequence(
-                [torch.tensor(seq, dtype=torch.long) for seq in nl_sequences],
-                batch_first=True,
-                padding_value=0
-            ).to(args.device, non_blocking=True)
-        else:
-            raise ValueError(f"Unexpected type for batch[1]: {type(query_batch[1])}")
+        start_idx = batch_idx * args.eval_batch_size
+        end_idx = min(start_idx + len(q_embs), len(all_urls))
+        query_urls = all_urls[start_idx:end_idx]
         
-        with torch.no_grad():
-            nl_embs = model(nl_inputs=nl_inputs)
-        
-        nl_hashes = model.get_binary_hash(nl_embs, is_code=False)
-        probs = torch.softmax(model.classifier(nl_embs), dim=1)
-        
-        start_idx = query_index * args.eval_batch_size
-        end_idx = min(start_idx + len(nl_inputs), len(query_urls))
-        query_batch_urls = query_urls[start_idx:end_idx]
-        
-        for i in range(len(nl_embs)):
-            query_url = query_batch_urls[i]
-            dists = (all_code_hashes != nl_hashes[i]).sum(dim=1)
-            recall_counts = allocate_recalls(probs[i], args.total_recall, args.num_clusters)
+        for i in range(len(q_embs)):
+            query_emb = q_embs[i:i+1]
+            query_hash = q_hashes[i:i+1]
+            query_url = query_urls[i]
+            correct_idx = start_idx + i
             
-            candidates = []
-            candidate_indices = []
-            
-            for cluster_id, count in enumerate(recall_counts):
-                mask = (torch.argmax(all_code_clusters, dim=1) == cluster_id)
-                cluster_dists = dists[mask]
-                cluster_indices = cluster_dists.topk(min(count, len(cluster_dists)), largest=False).indices
-                original_indices = torch.where(mask)[0][cluster_indices]
-                candidate_indices.extend(original_indices.tolist())
-                candidates.append(all_code_embs[mask][cluster_indices])
-            
-            candidates = torch.cat(candidates)
-            batch_candidate_urls = [code_urls[idx] for idx in candidate_indices]
-            logger.debug(f"Query URL: {query_url}, Candidates include correct: {query_url in batch_candidate_urls}, Num candidates: {len(batch_candidate_urls)}")
-            
+            # --- Hashing Evaluation (No Clustering) ---
             hash_start_time = time.time()
-            hash_sim_start = time.time()
-            hash_scores = F.cosine_similarity(candidates, nl_embs[i].unsqueeze(0).expand_as(candidates))
-            hash_similarity_time += time.time() - hash_sim_start
             
+            # Select candidates using Hamming distance only
+            dists = (all_code_hashes != query_hash).sum(dim=1)
+            candidate_indices = dists.topk(args.total_recall, largest=False).indices
+            candidates = all_code_embs[candidate_indices]
+            batch_candidate_urls = [all_urls[idx] for idx in candidate_indices.tolist()]
+            
+            # Re-rank with original embeddings
+            sim_start = time.time()
+            hash_scores = F.cosine_similarity(candidates, query_emb.expand_as(candidates))
+            hash_similarity_time += time.time() - sim_start
+            
+            hash_sort_start = time.time()
             hash_result = process_scores(hash_scores, batch_candidate_urls, query_url, args.total_recall)
-            hash_sorting_time += hash_result['sorting_time']
-            hash_results.append(hash_result)
+            hash_sorting_time += time.time() - hash_sort_start
             hash_total_time += time.time() - hash_start_time
-
-            # --- Without Hashing (Brute Force) ---
-            brute_start_time = time.time()
-            brute_sim_start = time.time()
-            brute_scores = F.cosine_similarity(all_code_embs, nl_embs[i].unsqueeze(0).expand_as(all_code_embs))
-            brute_similarity_time += time.time() - brute_sim_start
+            hash_results.append(hash_result)
             
-            brute_candidate_urls = code_urls  # All codes are candidates
-            brute_result = process_scores(brute_scores, brute_candidate_urls, query_url, args.total_recall)
-            brute_sorting_time += brute_result['sorting_time']
-            brute_results.append(brute_result)
-            brute_total_time += time.time() - brute_start_time
+            # --- Brute-Force Baseline ---
+            base_start_time = time.time()
+            
+            base_sim_start = time.time()
+            base_scores = F.cosine_similarity(all_code_embs, query_emb.expand_as(all_code_embs))
+            base_similarity_time += time.time() - base_sim_start
+            
+            base_sort_start = time.time()
+            base_result = process_scores(base_scores, all_urls, query_url, args.total_recall)
+            base_sorting_time += time.time() - base_sort_start
+            base_total_time += time.time() - base_start_time
+            base_results.append(base_result)
+    
+    # Save query embeddings
+    base_query_embs = torch.cat([model(nl_inputs=batch[1]) for batch in dataloader if model(nl_inputs=batch[1]) is not None]).detach().cpu().numpy()
+    hash_query_embs = torch.cat([model.get_binary_hash(model(nl_inputs=batch[1]), is_code=False) for batch in dataloader if model(nl_inputs=batch[1]) is not None]).detach().cpu().numpy()
+    np.save(embedding_dir / f"base_query_embeddings_{args.lang}.npy", base_query_embs)
+    np.save(embedding_dir / f"hash_query_embeddings_{args.lang}.npy", hash_query_embs)
+    logger.info(f"Saved base query embeddings to {embedding_dir / f'base_query_embeddings_{args.lang}.npy'}")
+    logger.info(f"Saved hashed query embeddings to {embedding_dir / f'hash_query_embeddings_{args.lang}.npy'}")
+    
+    # Log timing
+    logger.info(f"Base Model Similarity Time ({args.lang}): {base_similarity_time:.4f} seconds")
+    logger.info(f"Base Model Sorting Time ({args.lang}): {base_sorting_time:.4f} seconds")
+    logger.info(f"Base Model Total Time ({args.lang}): {base_total_time:.4f} seconds")
+    logger.info(f"Hashed Model Similarity Time ({args.lang}): {hash_similarity_time:.4f} seconds")
+    logger.info(f"Hashed Model Sorting Time ({args.lang}): {hash_sorting_time:.4f} seconds")
+    logger.info(f"Hashed Model Total Time ({args.lang}): {hash_total_time:.4f} seconds")
+    logger.info(f"Similarity Time Difference (Base - Hash) ({args.lang}): {base_similarity_time - hash_similarity_time:.4f} seconds")
+    logger.info(f"Sorting Time Difference (Base - Hash) ({args.lang}): {base_sorting_time - hash_sorting_time:.4f} seconds")
+    logger.info(f"Total Time Difference (Base - Hash) ({args.lang}): {base_total_time - hash_total_time:.4f} seconds")
+    
+    # Compute and log metrics
+    def compute_metrics(results, total_recall):
+        mrr = np.mean([1.0 / r['rank'] if r['rank'] <= total_recall else 0 for r in results])
+        success = {k: np.mean([r[f'success@{k}'] for r in results]) for k in [1, 5, 10]}
+        return {"MRR": mrr, **success}
 
-    # Compute metrics for both approaches
+    # Compute and log metrics
+    base_metrics = compute_metrics(base_results, args.total_recall)
     hash_metrics = compute_metrics(hash_results, args.total_recall)
-    hash_metrics["TotalTime"] = hash_total_time
-    hash_metrics["SimilarityTime"] = hash_similarity_time
-    hash_metrics["SortingTime"] = hash_sorting_time
     
-    brute_metrics = compute_metrics(brute_results, args.total_recall)
-    brute_metrics["TotalTime"] = brute_total_time
-    brute_metrics["SimilarityTime"] = brute_similarity_time
-    brute_metrics["SortingTime"] = brute_sorting_time
-
-    # Log results
-    logger.info(f"Evaluation Results with Hashing for {args.lang}:")
+    logger.info(f"Evaluation Results (Base Model - {args.lang}):")
+    for metric, value in base_metrics.items():
+        logger.info(f"{metric}: {value:.4f}")
+    
+    logger.info(f"Evaluation Results (Hash Model - {args.lang}):")
     for metric, value in hash_metrics.items():
-        logger.info(f"{metric}: {value:.4f}" if isinstance(value, (int, float)) else f"{metric}: {value}")
-    
-    logger.info(f"Evaluation Results without Hashing (Brute Force) for {args.lang}:")
-    for metric, value in brute_metrics.items():
-        logger.info(f"{metric}: {value:.4f}" if isinstance(value, (int, float)) else f"{metric}: {value}")
-    
-    logger.info(f"Time Efficiency Comparison for {args.lang}:")
-    logger.info(f"Hashing Total Time: {hash_total_time:.4f}s, Brute Force Total Time: {brute_total_time:.4f}s")
-    logger.info(f"Time Difference (Brute - Hash): {brute_total_time - hash_total_time:.4f}s")
-    logger.info(f"Similarity Time Difference (Brute - Hash): {brute_similarity_time - hash_similarity_time:.4f}s")
-    logger.info(f"Sorting Time Difference (Brute - Hash): {brute_sorting_time - hash_sorting_time:.4f}s")
+        logger.info(f"{metric}: {value:.4f}")
 
-    return hash_metrics, brute_metrics
 
 
 def allocate_recalls(probs: torch.Tensor, total_recall: int, num_clusters: int) -> torch.Tensor:
@@ -721,15 +563,35 @@ def allocate_recalls(probs: torch.Tensor, total_recall: int, num_clusters: int) 
         allocations[top_indices] += 1
     return allocations + 1
 
-def process_scores(scores: torch.Tensor, candidate_urls: list, query_url: str, total_recall: int) -> dict:
+def process_scores(scores: torch.Tensor, 
+                 candidate_urls: list, 
+                 query_url: str,
+                 total_recall: int) -> dict:
+    """
+    Calculate ranking metrics for a single query
+    Paper Reference: Section 4.4 Evaluation Metrics
+    
+    Args:
+        scores: Cosine similarity scores [num_candidates]
+        candidate_urls: URLs of candidate codes [num_candidates]
+        query_url: Ground truth URL for the query
+        total_recall: Total candidates considered
+    
+    Returns:
+        dict: Contains rank and success flags
+    """
     start_time = time.time()
+
+    # Sort candidates by descending similarity
     sorted_indices = torch.argsort(scores, descending=True)
     sorting_time = time.time() - start_time
+
     sorted_urls = [candidate_urls[i] for i in sorted_indices.cpu().numpy()]
     try:
-        rank = sorted_urls.index(query_url) + 1
+        rank = sorted_urls.index(query_url) + 1  # 1-based indexing
     except ValueError:
-        rank = total_recall + 1
+        rank = total_recall + 1  # Not found penalty
+        
     return {
         'rank': rank,
         'success@1': rank <= 1,
@@ -755,7 +617,7 @@ def compute_metrics(results: list, total_recall: int) -> dict:
         'RetrievalTime': None,
     }
 
-# Main Execution
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--lang", default="java", type=str, help="Programming language (e.g., java, python)")
@@ -764,10 +626,10 @@ def main():
     parser.add_argument("--unif_model_dir", default="unif_model", type=str)
     parser.add_argument("--train_batch_size", default=32, type=int)
     parser.add_argument("--eval_batch_size", default=32, type=int)
-    parser.add_argument("--learning_rate", default=1e-3, type=float)
+    parser.add_argument("--learning_rate", default=1.34e-4, type=float)
     parser.add_argument("--nl_length", default=128, type=int, help="Max NL sequence length after tokenization")
     parser.add_argument("--code_length", default=256, type=int, help="Max code sequence length after tokenization")
-    parser.add_argument("--hash_epochs", default=10, type=int)
+    parser.add_argument("--hash_epochs", default=30, type=int)
     parser.add_argument("--class_epochs", default=5, type=int)
     parser.add_argument("--num_clusters", default=10, type=int)
     parser.add_argument("--hash_dim", default=128, type=int)
@@ -780,6 +642,7 @@ def main():
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--do_train", action="store_true")
     parser.add_argument("--do_eval", action="store_true")
+    parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm")
     
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
@@ -797,28 +660,26 @@ def main():
     unif_model_dir = Path(args.unif_model_dir)
     if not (unif_model_dir / args.lang).exists() or not (unif_model_dir / args.lang / f"fasttext_model_{args.lang}.bin").exists():
         logger.info(f"Training new UNIFEmbedder for {args.lang}")
-        embedder = train_unif_embedder(
-            args.train_file, args.unif_model_dir, args.lang, 
-            only_base=args.only_base, batch_size=args.train_batch_size, 
-            ft_epochs=args.ft_epochs, sim_epochs=args.sim_epochs
-        )
+        embedder = train_unif_embedder(args.train_file, args.unif_model_dir, args.lang)
     else:
         logger.info(f"Loading existing UNIFEmbedder for {args.lang}")
         embedder = UNIFEmbedder.load(unif_model_dir / args.lang, args.lang)
     
-    tokenizer = DummyTokenizer()
-
-    base_model = BaseModel(embedder, tokenizer, device = args.device)
+    base_model = BaseModel(embedder, device=args.device)
     base_model.lang = args.lang
 
-    model = CoSHCModel(base_model, args.hash_dim, args.num_clusters, device = args.device)
+    model = CoSHCModel(base_model, args.hash_dim, args.num_clusters, device=args.device)
     model = model.to(args.device)
+    # model.code_hash = model.code_hash.to(args.device)
+    # model.nl_hash = model.nl_hash.to(args.device)
+    # model.classifier = model.classifier.to(args.device)
     logger.info("CoSHC model loaded")
     
     if args.do_train:
         train_coshc(args, model, args.train_file)
     if args.do_eval:
-        evaluate_coshc(args, model, args.valid_file, tokenizer, embedder)  # Pass embedder
+        evaluate_coshc(args, model, args.valid_file)
+        # evaluate_coshc(args, model, args.valid_file, embedder)
     
     end_time = time.time()
     total_time = end_time - start_time
