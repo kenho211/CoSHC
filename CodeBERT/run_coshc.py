@@ -9,6 +9,7 @@ Reference: 2022 ACL Paper (Section 3: Method)
 import argparse
 import logging
 import os
+import time
 import pickle
 import random
 import torch # type: ignore
@@ -283,54 +284,121 @@ def train_coshc(args, model, tokenizer, code_embeddings):
     
     logger.info("Hashing module training completed")
 
-def evaluate_coshc(args, model, tokenizer):
+def evaluate_coshc(args, model, tokenizer, code_embeddings):
     """Two-stage evaluation: Hash recall + Re-rank"""
-    # Load codebase embeddings and hash codes
-    code_dataset = TextDataset(tokenizer, args, args.codebase_file)
-    code_embs, code_hashes, code_clusters = [], [], []
-    
-    # Precompute code representations
-    for batch in DataLoader(code_dataset, batch_size=args.eval_batch_size):
-        code_embs.append(model(code_inputs=batch[0].to(args.device)))
-        code_hashes.append(model.get_binary_hash(batch[0].to(args.device), is_code=True))
-        code_clusters.append(model.classifier(code_embs[-1]).argmax(dim=1))
-    
-    code_embs = torch.cat(code_embs)
-    code_hashes = torch.cat(code_hashes)
-    code_clusters = torch.cat(code_clusters)
-    
-    # Process queries
     query_dataset = TextDataset(tokenizer, args, args.eval_data_file)
-    results = []
+    query_urls = [example.url for example in query_dataset.examples]
+    query_sampler = SequentialSampler(query_dataset)
+    query_dataloader = DataLoader(query_dataset, sampler=query_sampler, batch_size=args.eval_batch_size,num_workers=4)
+        
+    code_dataset = TextDataset(tokenizer, args, args.codebase_file)
+    code_urls = [example.url for example in code_dataset.examples]
+    code_sampler = SequentialSampler(code_dataset)
+    code_dataloader = DataLoader(code_dataset, sampler=code_sampler, batch_size=args.eval_batch_size,num_workers=4)
     
-    for query_batch in DataLoader(query_dataset, batch_size=args.eval_batch_size):
-        nl_embs = model(nl_inputs=query_batch[1].to(args.device))
-        nl_hashes = model.get_binary_hash(query_batch[1].to(args.device), is_code=False)
+    all_code_embs = []
+    all_code_hashes = []
+    all_code_clusters = []
+
+    model.eval()
+    # Precompute code representations
+    logger.info("Precomputing code representations")
+    for idx, batch in enumerate(code_dataloader):
+        logger.info(f"Precomputing code representations batch {idx} of {len(code_dataloader)}")
+        # Move data to GPU
+        code_inputs = batch[0].to(args.device, non_blocking=True)
+
+        # Get original embeddings
+        with torch.no_grad():
+            code_embs = model(code_inputs=code_inputs)
+
+        code_hashes = model.get_binary_hash(code_embs, is_code=True)
+
+        code_clusters = model.classifier(code_embs)
+
+        all_code_embs.append(code_embs)
+        all_code_hashes.append(code_hashes)
+        all_code_clusters.append(code_clusters)
+    
+    all_code_embs = torch.cat(all_code_embs)
+    all_code_hashes = torch.cat(all_code_hashes)
+    all_code_clusters = torch.cat(all_code_clusters)
+    logger.info("Precomputing code representations completed")
+
+
+    # Process queries
+    results = []
+    similarity_time = 0
+    sorting_time = 0
+
+    logger.info("Processing queries")
+    for query_index, query_batch in enumerate(query_dataloader):
+        logger.info(f"Processing query batch {query_index} of {len(query_dataloader)}")
+
+        # Move data to GPU
+        nl_inputs = query_batch[1].to(args.device, non_blocking=True)
+        # Get original embeddings
+        with torch.no_grad():
+            nl_embs = model(nl_inputs=nl_inputs)
+        
+        nl_hashes = model.get_binary_hash(nl_embs, is_code=False)
         
         # Stage 1: Category Prediction (Section 3.2.2)
         probs = torch.softmax(model.classifier(nl_embs), dim=1)
+        # logger.info(f"Probabilities: {probs}")
+        
+        start_idx = query_index * args.eval_batch_size
+        end_idx = start_idx + len(nl_inputs)
+        query_batch_urls = query_urls[start_idx:end_idx]
         
         # Stage 2: Hash-based Recall (Section 3.2.1)
         for i in range(len(nl_embs)):
+            # Get current query URL
+            query_url = query_batch_urls[i]
+            
             # Calculate Hamming distance
-            dists = (code_hashes != nl_hashes[i]).sum(dim=1)
+            dists = (all_code_hashes != nl_hashes[i]).sum(dim=1)
+            # logger.info(f"Hamming distance: {dists}")
+            # logger.info(f"Hamming distance shape: {dists.shape}")
             
             # Recall strategy (Section 3.2.2 Eq 7)
-            recall_counts = allocate_recalls(probs[i], args.total_recall)
+            recall_counts = allocate_recalls(probs[i], args.total_recall, args.num_clusters)
             
             # Re-rank with original embeddings (Section 3.2.1)
             candidates = []
+            candidate_indices = []  # Track indices for URL mapping
+            
             for cluster_id, count in enumerate(recall_counts):
-                mask = (code_clusters == cluster_id)
+                mask = (torch.argmax(all_code_clusters, dim=1) == cluster_id)
+                # logger.info(f"Mask: {mask}")
+                # logger.info(f"Mask shape: {mask.shape}")
                 cluster_dists = dists[mask]
-                cluster_indices = cluster_dists.topk(count, largest=False).indices
-                candidates.append(code_embs[mask][cluster_indices])
+                # Get indices within cluster
+                cluster_indices = cluster_dists.topk(min(count, len(cluster_dists)), largest=False).indices
+                # Map to original indices
+                original_indices = torch.where(mask)[0][cluster_indices]
+                candidate_indices.extend(original_indices.tolist())
+                candidates.append(all_code_embs[mask][cluster_indices])
             
             candidates = torch.cat(candidates)
+            
+            start_time = time.time()
             scores = CosineSimilarity(dim=1)(candidates, nl_embs[i])
-            results.append(process_scores(scores))
+            similarity_time += time.time() - start_time
+            
+            # Get candidate URLs using tracked indices
+            batch_candidate_urls = [code_urls[idx] for idx in candidate_indices]
+            
+            result = process_scores(scores, batch_candidate_urls, query_url, args.total_recall)
+            sorting_time += result['sorting_time']
+            results.append(result)
     
-    return compute_metrics(results)
+    total_time = similarity_time + sorting_time
+    metrics = compute_metrics(results, args.total_recall)
+    metrics["TotalTime"] = total_time
+    metrics["SimilarityTime"] = similarity_time
+    metrics["SortingTime"] = sorting_time
+    return metrics
 
 
 def allocate_recalls(probs: torch.Tensor, total_recall: int, num_clusters: int) -> torch.Tensor:
@@ -376,10 +444,13 @@ def process_scores(scores: torch.Tensor,
     Returns:
         dict: Contains rank and success flags
     """
+    start_time = time.time()
+
     # Sort candidates by descending similarity
     sorted_indices = torch.argsort(scores, descending=True)
+    sorting_time = time.time() - start_time
+
     sorted_urls = [candidate_urls[i] for i in sorted_indices.cpu().numpy()]
-    
     try:
         rank = sorted_urls.index(query_url) + 1  # 1-based indexing
     except ValueError:
@@ -389,7 +460,8 @@ def process_scores(scores: torch.Tensor,
         'rank': rank,
         'success@1': rank <= 1,
         'success@5': rank <= 5,
-        'success@10': rank <= 10
+        'success@10': rank <= 10,
+        'sorting_time': sorting_time
     }
 
 
@@ -426,111 +498,113 @@ def compute_metrics(results: list, total_recall: int) -> dict:
         'Success@1': round(np.mean(success_at_1), 4),
         'Success@5': round(np.mean(success_at_5), 4),
         'Success@10': round(np.mean(success_at_10), 4),
-        'RetrievalTime': None  # Populated separately
+        'RetrievalTime': None,
     }
 
 # --------------------------------------------------
 # Main Execution
 # --------------------------------------------------
-def main():
-    parser = argparse.ArgumentParser()
+def main(args=None):
+    if args is None:
+        parser = argparse.ArgumentParser()
 
-    # ----------------------------
-    # Original CodeBERT Arguments
-    # ----------------------------
-    parser.add_argument("--train_data_file", default=None, type=str, required=True,
-                        help="Input training data file (a json file)")
-    parser.add_argument("--output_dir", default=None, type=str, required=True,
-                        help="Output directory for checkpoints")
-    parser.add_argument("--eval_data_file", default=None, type=str,
-                        help="Evaluation data file")
-    parser.add_argument("--test_data_file", default=None, type=str,
-                        help="Test data file")
-    parser.add_argument("--codebase_file", default=None, type=str, required=True,
-                        help="Codebase data file for evaluation")
-    parser.add_argument("--model_name_or_path", default=None, type=str, required=True,
-                        help="Path to pretrained model or model identifier")
-    parser.add_argument("--config_name", default="", type=str,
-                        help="Pretrained config name/path")
-    parser.add_argument("--tokenizer_name", default="", type=str,
-                        help="Pretrained tokenizer name/path")
-    parser.add_argument("--nl_length", default=128, type=int,
-                        help="Max NL sequence length after tokenization")
-    parser.add_argument("--code_length", default=256, type=int,
-                        help="Max code sequence length after tokenization")
-    parser.add_argument("--do_train", action='store_true',
-                        help="Whether to run training")
-    parser.add_argument("--do_eval", action='store_true',
-                        help="Whether to run evaluation")
-    parser.add_argument("--do_test", action='store_true',
-                        help="Whether to run test evaluation")
-    parser.add_argument("--train_batch_size", default=4, type=int,
-                        help="Batch size for training")
-    parser.add_argument("--eval_batch_size", default=4, type=int,
-                        help="Batch size for evaluation")
-    parser.add_argument("--learning_rate", default=5e-5, type=float,
-                        help="Initial learning rate")
-    parser.add_argument("--max_grad_norm", default=1.0, type=float,
-                        help="Max gradient norm")
-    parser.add_argument("--num_train_epochs", default=1, type=int,
-                        help="Total training epochs")
-    parser.add_argument("--seed", type=int, default=42,
-                        help="Random seed")
+        # ----------------------------
+        # Original CodeBERT Arguments
+        # ----------------------------
+        parser.add_argument("--train_data_file", default=None, type=str, required=True,
+                            help="Input training data file (a json file)")
+        parser.add_argument("--output_dir", default=None, type=str, required=True,
+                            help="Output directory for checkpoints")
+        parser.add_argument("--eval_data_file", default=None, type=str,
+                            help="Evaluation data file")
+        parser.add_argument("--test_data_file", default=None, type=str,
+                            help="Test data file")
+        parser.add_argument("--codebase_file", default=None, type=str, required=True,
+                            help="Codebase data file for evaluation")
+        parser.add_argument("--model_name_or_path", default=None, type=str, required=True,
+                            help="Path to pretrained model or model identifier")
+        parser.add_argument("--config_name", default="", type=str,
+                            help="Pretrained config name/path")
+        parser.add_argument("--tokenizer_name", default="", type=str,
+                            help="Pretrained tokenizer name/path")
+        parser.add_argument("--nl_length", default=128, type=int,
+                            help="Max NL sequence length after tokenization")
+        parser.add_argument("--code_length", default=256, type=int,
+                            help="Max code sequence length after tokenization")
+        parser.add_argument("--do_train", action='store_true',
+                            help="Whether to run training")
+        parser.add_argument("--do_eval", action='store_true',
+                            help="Whether to run evaluation")
+        parser.add_argument("--do_test", action='store_true',
+                            help="Whether to run test evaluation")
+        parser.add_argument("--train_batch_size", default=4, type=int,
+                            help="Batch size for training")
+        parser.add_argument("--eval_batch_size", default=4, type=int,
+                            help="Batch size for evaluation")
+        parser.add_argument("--learning_rate", default=5e-5, type=float,
+                            help="Initial learning rate")
+        parser.add_argument("--max_grad_norm", default=1.0, type=float,
+                            help="Max gradient norm")
+        parser.add_argument("--num_train_epochs", default=1, type=int,
+                            help="Total training epochs")
+        parser.add_argument("--seed", type=int, default=42,
+                            help="Random seed")
 
-    # ----------------------------
-    # CoSHC-Specific Arguments
-    # (Paper Section 3 & 4.2)
-    # ----------------------------
-    # Hashing Parameters
-    parser.add_argument("--hash_dim", default=128, type=int,
-                        help="Dimension of binary hash codes (Sec 3.1.2)")
-    parser.add_argument("--hash_epochs", default=10, type=int,
-                        help="Epochs for hashing module training (Sec 4.2)")
-    
-    # Embedding Parameters
-    parser.add_argument("--do_embed", action='store_true',
-                        help="Whether to save code embeddings")
-    parser.add_argument("--embedding_dir", default="./code_embeddings", type=str,
-                        help="Directory to save code embeddings")
+        # ----------------------------
+        # CoSHC-Specific Arguments
+        # (Paper Section 3 & 4.2)
+        # ----------------------------
+        # Hashing Parameters
+        parser.add_argument("--hash_dim", default=128, type=int,
+                            help="Dimension of binary hash codes (Sec 3.1.2)")
+        parser.add_argument("--hash_epochs", default=10, type=int,
+                            help="Epochs for hashing module training (Sec 4.2)")
+        
+        # Embedding Parameters
+        parser.add_argument("--do_embed", action='store_true',
+                            help="Whether to save code embeddings")
+        parser.add_argument("--embedding_dir", default="./code_embeddings", type=str,
+                            help="Directory to save code embeddings")
 
-    # Classification Parameters
-    parser.add_argument("--class_epochs", type=int, default=5,
-                        help="Number of epochs for classification module training (Sec 3.2.2)")
+        # Classification Parameters
+        parser.add_argument("--class_epochs", type=int, default=5,
+                            help="Number of epochs for classification module training (Sec 3.2.2)")
 
-    # Clustering Parameters
-    parser.add_argument("--num_clusters", default=10, type=int,
-                        help="Number of code clusters (Sec 3.1.1)")
-    
-    # Loss Function Parameters
-    parser.add_argument("--beta", default=0.6, type=float,
-                        help="Similarity matrix weight (Eq 1)")
-    parser.add_argument("--eta", default=0.4, type=float,
-                        help="High-order similarity weight (Eq 2)")
-    parser.add_argument("--mu", default=1.5, type=float,
-                        help="Similarity scaling factor (Eq 4)")
-    parser.add_argument("--lambda1", default=0.1, type=float,
-                        help="Code-code similarity weight (Eq 4)")
-    parser.add_argument("--lambda2", default=0.1, type=float,
-                        help="Query-query similarity weight (Eq 4)")
-    
-    # Recall Parameters
-    parser.add_argument("--total_recall", default=100, type=int,
-                        help="Total candidates to recall (Sec 3.2.2)")
-    
-    # Scaling Parameters
-    parser.add_argument("--alpha_init", default=1.0, type=float,
-                        help="Initial tanh scaling value (Sec 3.1.2)")
-    
-    # Storage Parameters
-    parser.add_argument("--cluster_file", default="clusters.pkl", type=str,
-                        help="Path to save cluster labels")
-    parser.add_argument("--hash_file", default="hashes.bin", type=str,
-                        help="Path to save hash codes")
+        # Clustering Parameters
+        parser.add_argument("--num_clusters", default=10, type=int,
+                            help="Number of code clusters (Sec 3.1.1)")
+        
+        # Loss Function Parameters
+        parser.add_argument("--beta", default=0.6, type=float,
+                            help="Similarity matrix weight (Eq 1)")
+        parser.add_argument("--eta", default=0.4, type=float,
+                            help="High-order similarity weight (Eq 2)")
+        parser.add_argument("--mu", default=1.5, type=float,
+                            help="Similarity scaling factor (Eq 4)")
+        parser.add_argument("--lambda1", default=0.1, type=float,
+                            help="Code-code similarity weight (Eq 4)")
+        parser.add_argument("--lambda2", default=0.1, type=float,
+                            help="Query-query similarity weight (Eq 4)")
+        
+        # Recall Parameters
+        parser.add_argument("--total_recall", default=100, type=int,
+                            help="Total candidates to recall (Sec 3.2.2)")
+        
+        # Scaling Parameters
+        parser.add_argument("--alpha_init", default=1.0, type=float,
+                            help="Initial tanh scaling value (Sec 3.1.2)")
+        
+        # Storage Parameters
+        parser.add_argument("--cluster_file", default="clusters.pkl", type=str,
+                            help="Path to save cluster labels")
+        parser.add_argument("--hash_file", default="hashes.bin", type=str,
+                            help="Path to save hash codes")
 
-    parser.add_argument("--debug", action='store_true',
-                        help="Whether to run in debug mode")
+        parser.add_argument("--debug", action='store_true',
+                            help="Whether to run in debug mode")
 
-    args = parser.parse_args()
+        args = parser.parse_args()
+
     print("args: %s", args)
     
     #set log
@@ -587,7 +661,10 @@ def main():
         logger.info("Skipping training")
     
     if args.do_eval:
-        evaluate_coshc(args, model, tokenizer)
+        code_embeddings = load_code_embeddings(args.embedding_dir, args.device)
+        checkpoint = torch.load(args.coshc_checkpoint_path, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        return evaluate_coshc(args, model, tokenizer, code_embeddings)
     else:
         logger.info("Skipping evaluation")
 

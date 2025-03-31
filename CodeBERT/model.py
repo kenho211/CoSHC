@@ -67,6 +67,8 @@ class CoSHCModel(torch.nn.Module):
 
     def get_binary_hash(self, inputs, is_code=True, apply_tanh=False):
         """Get binary hash using sign function (equation 5); For inference"""
+        inputs = inputs.to(dtype=torch.float32, device=self.code_hash[0].weight.device)
+
         if is_code:
             h = self.code_hash[:-1](inputs)
         else:
@@ -81,7 +83,21 @@ class CoSHCModel(torch.nn.Module):
 
     def to(self, device):
         self.base_model.to(device)
-        self.code_hash.to(device)
-        self.nl_hash.to(device)
+
+        for layer in self.code_hash:
+            layer.to(device)
+        for layer in self.nl_hash:
+            layer.to(device)
+        
         self.classifier.to(device)
         return self
+
+    def train(self):
+        self.code_hash.train()
+        self.nl_hash.train()
+        self.classifier.train()
+
+    def eval(self):
+        self.code_hash.eval()
+        self.nl_hash.eval()
+        self.classifier.eval()
