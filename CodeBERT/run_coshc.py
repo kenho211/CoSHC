@@ -330,7 +330,6 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
     results = []
     similarity_time = 0
     sorting_time = 0
-    overall_start_time = time.time()
 
     logger.info("Processing queries")
     for query_index, query_batch in enumerate(query_dataloader):
@@ -394,10 +393,9 @@ def evaluate_coshc(args, model, tokenizer, code_embeddings):
             sorting_time += result['sorting_time']
             results.append(result)
     
-    end_time = time.time()
-    retrieval_time = end_time - overall_start_time
+    total_time = similarity_time + sorting_time
     metrics = compute_metrics(results, args.total_recall)
-    metrics["RetrievalTime"] = retrieval_time
+    metrics["TotalTime"] = total_time
     metrics["SimilarityTime"] = similarity_time
     metrics["SortingTime"] = sorting_time
     return metrics
