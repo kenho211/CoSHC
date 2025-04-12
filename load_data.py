@@ -4,7 +4,7 @@ import json
 import numpy as np
 
 DATA_DIR = 'data'
-LANGUAGE = 'python' 
+LANGUAGE = 'java' 
 
 
 def format_str(string):
