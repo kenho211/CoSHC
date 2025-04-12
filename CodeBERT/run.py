@@ -26,6 +26,7 @@ import pickle
 import random
 import torch # type: ignore
 import json
+import time
 import numpy as np
 from model import Model
 from torch.nn import CrossEntropyLoss, MSELoss # type: ignore
@@ -211,26 +212,43 @@ def evaluate(args, model, tokenizer,file_name,eval_when_training=False):
     model.eval()
     code_vecs=[] 
     nl_vecs=[]
-    for batch in query_dataloader:  
+
+    logger.info("Precomputing nl representations")
+    for batch in query_dataloader:
         nl_inputs = batch[1].to(args.device)
         with torch.no_grad():
             nl_vec = model(nl_inputs=nl_inputs) 
             nl_vecs.append(nl_vec.cpu().numpy()) 
+    logger.info("Precomputing nl representations completed")
 
+    logger.info("Precomputing code representations")
     for batch in code_dataloader:
         code_inputs = batch[0].to(args.device)    
         with torch.no_grad():
             code_vec= model(code_inputs=code_inputs)
             code_vecs.append(code_vec.cpu().numpy())  
+    logger.info("Precomputing code representations completed")
 
-    model.train()    
     code_vecs=np.concatenate(code_vecs,0)
     nl_vecs=np.concatenate(nl_vecs,0)
 
+    # Vector Similarity Calculation
+    logger.info("Calculating vector similarity")
+    start_time = time.time()
     scores=np.matmul(nl_vecs,code_vecs.T)
-    
+    similarity_time = time.time() - start_time
+    logger.info("Vector similarity calculation completed")
+
+    # Array Sorting
+    logger.info("Sorting array")
+    start_time = time.time()
     sort_ids=np.argsort(scores, axis=-1, kind='quicksort', order=None)[:,::-1]    
-    
+    sorting_time = time.time() - start_time
+    logger.info("Array sorting completed")
+
+    # Total Retrieval Time
+    total_retrieval_time = similarity_time + sorting_time
+
     nl_urls=[]
     code_urls=[]
     for example in query_dataset.examples:
@@ -243,6 +261,7 @@ def evaluate(args, model, tokenizer,file_name,eval_when_training=False):
     success_at_1=[]
     success_at_5=[]
     success_at_10=[]
+    logger.info("Calculating success@1,5,10 and MRR")
     for url, sort_id in zip(nl_urls,sort_ids):
         rank = 0
         found = False
@@ -275,69 +294,73 @@ def evaluate(args, model, tokenizer,file_name,eval_when_training=False):
         else:
             ranks.append(0)
 
+    total_time = similarity_time + sorting_time
     result = {
         "Success@1": np.mean(success_at_1),
         "Success@5": np.mean(success_at_5),
         "Success@10": np.mean(success_at_10),
-        "MRR": np.mean(ranks)
+        "MRR": np.mean(ranks),
+        "TotalTime": total_time,
+        "SimilarityTime": similarity_time,
+        "SortingTime": sorting_time,
     }
-
     return result
 
                         
                         
-def main():
-    parser = argparse.ArgumentParser()
+def main(args=None):
+    if args is None:
+        parser = argparse.ArgumentParser()
 
-    ## Required parameters
-    parser.add_argument("--train_data_file", default=None, type=str, required=True,
-                        help="The input training data file (a json file).")
-    parser.add_argument("--output_dir", default=None, type=str, required=True,
-                        help="The output directory where the model predictions and checkpoints will be written.")
-    parser.add_argument("--eval_data_file", default=None, type=str,
-                        help="An optional input evaluation data file to evaluate the MRR(a jsonl file).")
-    parser.add_argument("--test_data_file", default=None, type=str,
-                        help="An optional input test data file to test the MRR(a josnl file).")
-    parser.add_argument("--codebase_file", default=None, type=str,
-                        help="An optional input test data file to codebase (a jsonl file).")  
-    
-    parser.add_argument("--model_name_or_path", default=None, type=str,
-                        help="The model checkpoint for weights initialization.")
-    parser.add_argument("--config_name", default="", type=str,
-                        help="Optional pretrained config name or path if not the same as model_name_or_path")
-    parser.add_argument("--tokenizer_name", default="", type=str,
-                        help="Optional pretrained tokenizer name or path if not the same as model_name_or_path")
-    
-    parser.add_argument("--nl_length", default=128, type=int,
-                        help="Optional NL input sequence length after tokenization.")    
-    parser.add_argument("--code_length", default=256, type=int,
-                        help="Optional Code input sequence length after tokenization.") 
-    
-    parser.add_argument("--do_train", action='store_true',
-                        help="Whether to run training.")
-    parser.add_argument("--do_eval", action='store_true',
-                        help="Whether to run eval on the dev set.")
-    parser.add_argument("--do_test", action='store_true',
-                        help="Whether to run eval on the test set.")  
-    
+        ## Required parameters
+        parser.add_argument("--train_data_file", default=None, type=str, required=True,
+                            help="The input training data file (a json file).")
+        parser.add_argument("--output_dir", default=None, type=str, required=True,
+                            help="The output directory where the model predictions and checkpoints will be written.")
+        parser.add_argument("--eval_data_file", default=None, type=str,
+                            help="An optional input evaluation data file to evaluate the MRR(a jsonl file).")
+        parser.add_argument("--test_data_file", default=None, type=str,
+                            help="An optional input test data file to test the MRR(a josnl file).")
+        parser.add_argument("--codebase_file", default=None, type=str,
+                            help="An optional input test data file to codebase (a jsonl file).")  
+        
+        parser.add_argument("--model_name_or_path", default=None, type=str,
+                            help="The model checkpoint for weights initialization.")
+        parser.add_argument("--config_name", default="", type=str,
+                            help="Optional pretrained config name or path if not the same as model_name_or_path")
+        parser.add_argument("--tokenizer_name", default="", type=str,
+                            help="Optional pretrained tokenizer name or path if not the same as model_name_or_path")
+        
+        parser.add_argument("--nl_length", default=128, type=int,
+                            help="Optional NL input sequence length after tokenization.")    
+        parser.add_argument("--code_length", default=256, type=int,
+                            help="Optional Code input sequence length after tokenization.") 
+        
+        parser.add_argument("--do_train", action='store_true',
+                            help="Whether to run training.")
+        parser.add_argument("--do_eval", action='store_true',
+                            help="Whether to run eval on the dev set.")
+        parser.add_argument("--do_test", action='store_true',
+                            help="Whether to run eval on the test set.")  
+        
 
-    parser.add_argument("--train_batch_size", default=4, type=int,
-                        help="Batch size for training.")
-    parser.add_argument("--eval_batch_size", default=4, type=int,
-                        help="Batch size for evaluation.")
-    parser.add_argument("--learning_rate", default=5e-5, type=float,
-                        help="The initial learning rate for Adam.")
-    parser.add_argument("--max_grad_norm", default=1.0, type=float,
-                        help="Max gradient norm.")
-    parser.add_argument("--num_train_epochs", default=1, type=int,
-                        help="Total number of training epochs to perform.")
+        parser.add_argument("--train_batch_size", default=4, type=int,
+                            help="Batch size for training.")
+        parser.add_argument("--eval_batch_size", default=4, type=int,
+                            help="Batch size for evaluation.")
+        parser.add_argument("--learning_rate", default=5e-5, type=float,
+                            help="The initial learning rate for Adam.")
+        parser.add_argument("--max_grad_norm", default=1.0, type=float,
+                            help="Max gradient norm.")
+        parser.add_argument("--num_train_epochs", default=1, type=int,
+                            help="Total number of training epochs to perform.")
 
-    parser.add_argument('--seed', type=int, default=42,
-                        help="random seed for initialization")
+        parser.add_argument('--seed', type=int, default=42,
+                            help="random seed for initialization")
     
-    #print arguments
-    args = parser.parse_args()
-    
+        #print arguments
+        args = parser.parse_args()
+        
     #set log
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S',level=logging.INFO )
@@ -353,8 +376,8 @@ def main():
     #build model
     config = RobertaConfig.from_pretrained(args.config_name if args.config_name else args.model_name_or_path)
     tokenizer = RobertaTokenizer.from_pretrained(args.tokenizer_name)
-    base_model = RobertaModel.from_pretrained(args.model_name_or_path)
-    model = Model(base_model)
+    _base_model = RobertaModel.from_pretrained(args.tokenizer_name)
+    model = Model(_base_model)
 
     logger.info("Training/evaluation parameters %s", args)
     model.to(args.device)
@@ -364,9 +387,8 @@ def main():
         train(args, model, tokenizer)
 
     # Evaluation
-    results = {}
     if args.do_eval:
-        checkpoint_prefix = 'checkpoint-best-mrr/model.bin'
+        checkpoint_prefix = 'checkpoint-best-mrr/pytorch_model.bin'
         output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))  
         # model.load_state_dict(torch.load(output_dir),strict=False) 
         model.load_state_dict(torch.load(output_dir, map_location=args.device), strict=True)     
@@ -377,7 +399,7 @@ def main():
             logger.info("  %s = %s", key, str(round(result[key],4)))
             
     if args.do_test:
-        checkpoint_prefix = 'checkpoint-best-mrr/model.bin'
+        checkpoint_prefix = 'checkpoint-best-mrr/pytorch_model.bin'
         output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))  
         # model.load_state_dict(torch.load(output_dir),strict=False)
         model.load_state_dict(torch.load(output_dir, map_location=args.device), strict=True)
@@ -387,10 +409,8 @@ def main():
         for key in sorted(result.keys()):
             logger.info("  %s = %s", key, str(round(result[key],4)))
 
-    return results
+    return result
 
 
 if __name__ == "__main__":
     main()
-
-
