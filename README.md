@@ -1,6 +1,6 @@
 # CoSHC: Code Search with Deep Hashing and Code Classification
 
-This repository contains the reimplementation of CoSHC (Code Search with Deep Hashing and Code Classification), a novel approach for accelerating code search as described in the paper "Accelerating Code Search with Deep Hashing and Code Classification". CoSHC improves upon bi-encoder models like CodeBERT by incorporating deep hashing and code classification techniques.
+This repository contains the reimplementation of CoSHC (Code Search with Deep Hashing and Code Classification), a novel approach for accelerating code search as described in the paper "Accelerating Code Search with Deep Hashing and Code Classification".
 
 ## Overview
 
@@ -73,7 +73,7 @@ pip install transformers tensorboardX
 The project uses two variants of the CodeSearchNet dataset:
 
 1. **CodeBERT Dataset** (not used)
-   - Original dataset from CodeBERT paper
+   - Original dataset from [CodeBERT code search](https://github.com/microsoft/CodeBERT/tree/master/CodeBERT/codesearch)
    - Contains raw data including comments and URLs
    - Larger in size and more complex to process
    - Python dataset:
@@ -88,7 +88,7 @@ The project uses two variants of the CodeSearchNet dataset:
 
 
 2. **GraphCodeBERT Dataset (Recommended)**
-   - Cleaner version of the same CodeSearchNet dataset
+   - Cleaner version of the same CodeSearchNet dataset from [GraphCodeBERT code search](https://github.com/microsoft/CodeBERT/tree/master/GraphCodeBERT/codesearch)
    - Comments and URLs are removed
    - More manageable size for processing
    - Python dataset:
@@ -129,6 +129,17 @@ The repository contains implementations of:
    - Novel approach combining deep hashing and code classification
    - Improves upon baseline models in terms of efficiency and accuracy
    - Implemented in both CodeBERT and UNIF frameworks
+
+## References
+
+1. CodeBERT: A Pre-Trained Model for Programming and Natural Languages
+   - Repository: [microsoft/CodeBERT](https://github.com/microsoft/CodeBERT)
+   - Code Search Dataset: [CodeBERT/codesearch](https://github.com/microsoft/CodeBERT/tree/master/CodeBERT/codesearch)
+   - Cleaner Code Search Dataset: [GraphCodeBERT/codesearch](https://github.com/microsoft/CodeBERT/tree/master/GraphCodeBERT/codesearch)
+
+3. CodeSearchNet Challenge: Evaluating the State of Semantic Code Search
+   - Dataset: [CodeSearchNet](https://github.com/github/CodeSearchNet)
+   - Used as the base dataset for both CodeBERT and GraphCodeBERT code search tasks
 
 ## License
 
